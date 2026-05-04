@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------- python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ---------------------------------------------------------- virtualenvs
+.venv/
+venv/
+env/
+
+# ----------------------------------------------------- ML / dataset blobs
+# Dataset, downloaded archives, training runs, OCR caches — all of these
+# are reproducible from the pipeline; keeping them out of git keeps the
+# repo small and avoids leaking 75 GB of raw page images.
+DocBank/
+yolov8n.pt
+*.pt
+*.onnx
+*.engine
+*.tar
+*.zip.*
+*.zip
+
+# ------------------------------------------------------------ notebooks
+# Strip outputs by hand or with `nbstripout` if you want; we keep the .ipynb
+# in git but ignore the auto-generated checkpoint dir.
+.ipynb_checkpoints/
+
+# --------------------------------------------------------------- editor
+.vscode/
+.idea/
+*.swp
+
+# -------------------------------------------------------------- OS junk
+.DS_Store
+Thumbs.db
+desktop.ini

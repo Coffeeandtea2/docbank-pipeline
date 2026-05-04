@@ -1,0 +1,177 @@
+<!doctype html><html lang='en'><head><meta charset='utf-8'>
+<title>DocBank Pipeline — Validation Report</title>
+<style>
+:root { --green:#2e7d32; --red:#c62828; --orange:#ef6c00; --grey:#666; }
+body { font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+       margin: 0; padding: 32px; background: #f5f7fa; color: #222; max-width: 1100px; }
+h1 { margin: 0 0 6px; }
+h2 { margin: 28px 0 8px; color: #1a3a6b; }
+.lead { color: var(--grey); margin: 0 0 20px; }
+.summary { background: #fff; border: 1px solid #dde0e6; border-radius: 8px;
+           padding: 14px 18px; margin-bottom: 28px; display: flex; gap: 22px;
+           flex-wrap: wrap; }
+.summary b { font-size: 22px; }
+.check { background: #fff; border: 1px solid #dde0e6; border-radius: 8px;
+         padding: 16px 20px; margin-bottom: 14px;
+         box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+.check h3 { margin: 0 0 6px; font-size: 16px; }
+.badge { display: inline-block; padding: 3px 10px; border-radius: 12px;
+         color: #fff; font-size: 12px; font-weight: 600; margin-right: 8px;
+         vertical-align: 1px; }
+.pass { background: var(--green); }
+.fail { background: var(--red); }
+.warn { background: var(--orange); }
+.skip { background: var(--grey); }
+.qid { color: var(--grey); font-size: 13px; margin-right: 6px;
+       font-family: ui-monospace, Consolas, monospace; }
+.summary-line { color: #333; margin: 4px 0 8px; }
+.evidence { font-size: 13px; color: #444; margin: 6px 0 0; }
+.evidence pre { background: #f4f5f8; padding: 8px; border-radius: 4px;
+                border: 1px solid #dde0e6; overflow-x: auto;
+                font-size: 12px; }
+table { border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+th, td { padding: 4px 10px; text-align: left;
+         border-bottom: 1px solid #e2e6ee; }
+th { background: #1e88e5; color: #fff; font-weight: 600; }
+tr:nth-child(even) td { background: #fafbfc; }
+.foot { margin-top: 30px; color: var(--grey); font-size: 12px; }
+</style></head><body>
+<h1>DocBank Pipeline — Validation Report</h1>
+<p class='lead'>Generated 2026-05-04 16:50 &middot; answers 10 verification questions about the project's actual on-disk artefacts.</p>
+<div class='summary'>
+<div><b style='color:var(--green);'>PASS</b><br><span style='color:#666;font-size:13px;'>overall</span></div>
+<div><b>10</b><br><span style='color:#666;font-size:13px;'>passed</span></div>
+<div><b>0</b><br><span style='color:#666;font-size:13px;'>warnings</span></div>
+<div><b>0</b><br><span style='color:#666;font-size:13px;'>failed</span></div>
+<div><b>0</b><br><span style='color:#666;font-size:13px;'>skipped</span></div>
+</div>
+<h2>Checks</h2>
+<div class='check'>
+<h3><span class='badge pass'>PASS</span><span class='qid'>Q1</span>Does the trained YOLO model exist on disk?</h3>
+<div class='summary-line'>Model file present at DocBank\runs\yolov8_docbank\weights\best.pt</div>
+<div class="evidence">
+<div>Size: 5.9 MB</div>
+<div>Last modified: Mon May  4 00:17:09 2026</div>
+</div>
+</div>
+<div class='check'>
+<h3><span class='badge pass'>PASS</span><span class='qid'>Q2</span>Did training actually finish?</h3>
+<div class='summary-line'>Training ran to completion: 21 epoch(s) recorded.</div>
+<div class="evidence">
+<div>args.yaml + results.csv present in DocBank\runs\yolov8_docbank</div>
+</div>
+</div>
+<div class='check'>
+<h3><span class='badge pass'>PASS</span><span class='qid'>Q3</span>Did the model reach a useful mAP@0.5?</h3>
+<div class='summary-line'>Final mAP@0.5 = 0.500, mAP@0.5:0.95 = 0.292 — well above the 0.4 'classroom-quality' threshold.</div>
+<div class="evidence">
+<table>
+<tr><th>Epoch</th><th>mAP@0.5</th><th>mAP@0.5:0.95</th><th>Precision</th><th>Recall</th></tr>
+<tr><td>1</td><td>0.043</td><td>0.019</td><td>0.015</td><td>0.425</td></tr>
+<tr><td>4</td><td>0.137</td><td>0.070</td><td>0.805</td><td>0.066</td></tr>
+<tr><td>7</td><td>0.325</td><td>0.164</td><td>0.387</td><td>0.399</td></tr>
+<tr><td>10</td><td>0.338</td><td>0.178</td><td>0.372</td><td>0.482</td></tr>
+<tr><td>13</td><td>0.436</td><td>0.237</td><td>0.463</td><td>0.517</td></tr>
+<tr><td>16</td><td>0.465</td><td>0.262</td><td>0.506</td><td>0.540</td></tr>
+<tr><td>19</td><td>0.493</td><td>0.287</td><td>0.530</td><td>0.562</td></tr>
+<tr><td>20</td><td>0.500</td><td>0.292</td><td>0.544</td><td>0.554</td></tr>
+</table>
+</div>
+</div>
+<div class='check'>
+<h3><span class='badge pass'>PASS</span><span class='qid'>Q4</span>Is the YOLO dataset wired correctly?</h3>
+<div class='summary-line'>data.yaml present, every split has matching images and labels.</div>
+<div class="evidence">
+<table>
+<tr><th>Split</th><th>Images</th><th>Labels</th></tr>
+<tr><td>train</td><td>100</td><td>100</td></tr>
+<tr><td>val</td><td>1000</td><td>1000</td></tr>
+<tr><td>test</td><td>103</td><td>103</td></tr>
+</table>
+<div>Class names from data.yaml: ['  0: text', '  1: formula', '  2: image']</div>
+</div>
+</div>
+<div class='check'>
+<h3><span class='badge pass'>PASS</span><span class='qid'>Q5</span>Are all three classes (text/formula/image) actually detected on real pages?</h3>
+<div class='summary-line'>Source: results_demo.json. All three classes detected on real pages.</div>
+<div class="evidence">
+<table>
+<tr><th>Class</th><th>Detections</th></tr>
+<tr><td>text</td><td>627</td></tr>
+<tr><td>formula</td><td>128</td></tr>
+<tr><td>image</td><td>37</td></tr>
+</table>
+</div>
+</div>
+<div class='check'>
+<h3><span class='badge pass'>PASS</span><span class='qid'>Q6</span>Does PaddleOCR return real recognised text?</h3>
+<div class='summary-line'>Source: results_demo.json. 444/664 text/image crops recognised (66.9%).</div>
+<div class="evidence">
+<div>Examples:</div>
+<div>&bull; Consider the global case that is,M has a bottleneck structure Theorem 3.4 / Then the infimum 2.3) is achieved at a bottleneck pair q1q2) M2.Wh</div>
+<div>&bull; Let us emphasize the fact that the global case and the local case of Theoren / 3.4 are not mutually exclusive. Theorem 3.4 provides a descript</div>
+<div>&bull; In this section  we propose an estimator  for the reach and demonstrate / its properties and rate of consistency under the loss 2.4). For the </div>
+</div>
+</div>
+<div class='check'>
+<h3><span class='badge pass'>PASS</span><span class='qid'>Q7</span>Does pix2tex return real LaTeX?</h3>
+<div class='summary-line'>Source: results_demo.json. 128/128 formula crops returned LaTeX (100.0%).</div>
+<div class="evidence">
+<div>Examples (will render as math in the actual demo HTML):</div>
+<div><code>\{4_{*}{\textbf{I}}</code></div>
+<div><code>\begin{array}{r}{{\frac{k}{k}}}\\ {\vdots}\\ {\vdots}\\ {\vdots}\\ {\vdots}\\ {\vdots}\end{array}</code></div>
+<div><code>{\hat{r}}(X)=\operatorname*{inf}_{x\neq y\in\mathbb{X}}{\frac{\|y-x\|^{2}}{2d(y-x.T_{x}M)}}</code></div>
+</div>
+</div>
+<div class='check'>
+<h3><span class='badge pass'>PASS</span><span class='qid'>Q8</span>Is the JSON output schema correct?</h3>
+<div class='summary-line'>Schema valid (every detection has class_name, bbox, confidence, crop_path, recognized).</div>
+<div class="evidence">
+<div>Sample (truncated):</div>
+<div><pre>{
+  &quot;class_id&quot;: 0,
+  &quot;class_name&quot;: &quot;text&quot;,
+  &quot;bbox&quot;: [
+    143.46,
+    715.96,
+    627.64,
+    900.49
+  ],
+  &quot;bbox_norm&quot;: [
+    0.498771,
+    0.808227,
+    0.626357,
+    0.184532
+  ],
+  &quot;confidence&quot;: 0.9459,
+  &quot;image_width&quot;: 773,
+  &quot;image_height&quot;: 1000,
+  &quot;crop_path&quot;: &quot;C:\\Users\\moomo\\OneDrive\\Desktop\\sadsa\\DocBank\\outputs\\crops\\text\\101.tar_1705.04565.gz_Estimating_the_Reach_of_a_Manifold_8_ori_000.jpg&quot;,
+  &quot;recognition_kind&quot;: &quot;text&quot;,
+  &quot;recognized&quot;: &quot;Consider the global case that is,M has a bottleneck structur&quot;
+}</pre></div>
+</div>
+</div>
+<div class='check'>
+<h3><span class='badge pass'>PASS</span><span class='qid'>Q9</span>Is the OCR result cache active?</h3>
+<div class='summary-line'>Cache holds <b>2,327</b> entries — re-runs over the same crops are instant.</div>
+<div class="evidence">
+<div>File: DocBank\outputs\ocr_cache.json</div>
+<div>Size: 142.8 KB</div>
+</div>
+</div>
+<div class='check'>
+<h3><span class='badge pass'>PASS</span><span class='qid'>Q10</span>Does the web app import &amp;amp; register every route?</h3>
+<div class='summary-line'>All expected routes are registered.</div>
+<div class="evidence">
+<div>Routes:</div>
+<div>&bull; <code>/</code></div>
+<div>&bull; <code>/jobs/&lt;job_id&gt;</code></div>
+<div>&bull; <code>/jobs/&lt;job_id&gt;/&lt;path:rel&gt;</code></div>
+<div>&bull; <code>/jobs/&lt;job_id&gt;/results</code></div>
+<div>&bull; <code>/jobs/&lt;job_id&gt;/results.json</code></div>
+<div>&bull; <code>/static/&lt;path:filename&gt;</code></div>
+<div>&bull; <code>/upload</code></div>
+</div>
+</div>
+<div class='foot'>This page was produced by <code>make_html_report.py</code>. Re-run after any change to regenerate.</div></body></html>

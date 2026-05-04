@@ -1,0 +1,25 @@
+# Core (always required)
+huggingface_hub>=0.20
+ultralytics>=8.1
+pillow>=10
+numpy>=1.24
+tqdm>=4.66
+opencv-python-headless>=4.8
+
+# Web app (for `python -m docbank_pipeline serve`)
+flask>=3.0
+# Production-grade WSGI server with a thread pool, picked up automatically
+# by `serve` if installed. Lets multiple users upload at the same time.
+waitress>=3.0
+# PDF upload support (pure-Python, no poppler binary required)
+pymupdf>=1.24
+
+# OCR / formula recognition (optional but recommended)
+# Install separately if you only want detection:
+#   pip install -r requirements.txt --no-deps
+paddleocr>=2.7
+paddlepaddle>=2.6      # CPU build. For GPU, use paddlepaddle-gpu instead.
+pix2tex>=0.1.2
+
+# Optional: extra archive support if 7-Zip CLI is unavailable
+# (`pip install py7zr` and we'll fall back to it in a future version)
