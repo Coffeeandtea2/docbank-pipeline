@@ -119,6 +119,134 @@ def _explode_pdf(pdf_path: Path, out_dir: Path) -> list[Path]:
     finally:
         doc.close()
 
+def _escape_latex_text(text: str) -> str:
+    """Escape text for safe LaTeX rendering."""
+    if not text:
+        return ""
+
+    replacements = {
+        "\\": r"\textbackslash{}",
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
+    }
+
+    for src, dst in replacements.items():
+        text = text.replace(src, dst)
+
+    return text
+
+
+def _results_to_tex(results: dict, tex_path: Path) -> Path:
+    """
+    Convert OCR/layout results to a simple LaTeX file.
+    This version prioritizes correctness and readable output.
+    """
+
+    lines = [
+        r"\documentclass[12pt]{article}",
+        r"\usepackage[utf8]{inputenc}",
+        r"\usepackage[T1]{fontenc}",
+        r"\usepackage{amsmath, amssymb}",
+        r"\usepackage{graphicx}",
+        r"\usepackage{geometry}",
+        r"\usepackage{xcolor}",
+        r"\geometry{margin=1in}",
+        r"\setlength{\parindent}{0pt}",
+        r"\setlength{\parskip}{0.7em}",
+        r"\begin{document}",
+    ]
+
+    pages = results.get("pages", [])
+
+    for page_index, page in enumerate(pages, start=1):
+        lines.append(rf"\section*{{Page {page_index}}}")
+
+        detections = page.get("detections", [])
+
+        # Sort top-to-bottom, left-to-right
+        detections = sorted(
+            detections,
+            key=lambda d: (
+                d.get("bbox", [0, 0, 0, 0])[1],
+                d.get("bbox", [0, 0, 0, 0])[0],
+            )
+        )
+
+        for det in detections:
+            cls = det.get("class_name", "")
+            recognized = det.get("recognized", "") or det.get("text", "") or ""
+
+            if cls == "text":
+                lines.append(_escape_latex_text(recognized))
+
+            elif cls == "formula":
+                formula = recognized.strip()
+
+                if formula:
+                    lines.append(r"\[")
+                    lines.append(formula)
+                    lines.append(r"\]")
+                else:
+                    lines.append(r"\textit{[Formula was detected but not recognized]}")
+
+            elif cls == "image":
+                crop_path = det.get("crop_path")
+                if crop_path:
+                    crop_path = str(crop_path).replace("\\", "/")
+                    lines.append(r"\begin{center}")
+                    lines.append(rf"\includegraphics[width=0.85\linewidth]{{{crop_path}}}")
+                    lines.append(r"\end{center}")
+                else:
+                    lines.append(r"\textit{[Image region detected]}")
+
+        if page_index != len(pages):
+            lines.append(r"\newpage")
+
+    lines.append(r"\end{document}")
+
+    tex_path.write_text("\n".join(lines), encoding="utf-8")
+    return tex_path
+
+def _compile_tex_to_pdf(tex_path: Path) -> Path:
+    """
+    Compile LaTeX file to PDF using pdflatex.
+    Requires LaTeX installed locally, e.g. MiKTeX or TeX Live.
+    """
+    import subprocess
+
+    out_dir = tex_path.parent
+
+    cmd = [
+        "pdflatex",
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        "-output-directory",
+        str(out_dir),
+        str(tex_path),
+    ]
+
+    subprocess.run(
+        cmd,
+        cwd=str(out_dir),
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    pdf_path = tex_path.with_suffix(".pdf")
+
+    if not pdf_path.exists():
+        raise RuntimeError(f"PDF was not created: {pdf_path}")
+
+    return pdf_path
 
 # --------------------------------------------------------------- HTML
 
@@ -126,85 +254,396 @@ _INDEX_HTML = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>DocBank Layout Extractor</title>
+<title>DocBank AI PDF Converter</title>
 <style>
-  body { font-family: -apple-system, Segoe UI, Roboto, sans-serif;
-         margin: 0; padding: 32px; background: #f5f6fa; color: #222; }
-  .wrap { max-width: 760px; margin: 40px auto; }
-  h1 { margin: 0 0 8px; }
-  .lead { color: #555; margin-bottom: 32px; }
-  form { background: #fff; border: 1px solid #e2e6ee; border-radius: 10px;
-         padding: 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); }
-  .drop { border: 2px dashed #b6bcc8; border-radius: 8px; padding: 36px;
-          text-align: center; color: #777; transition: all .15s;
-          cursor: pointer; }
-  .drop.over { border-color: #1e88e5; background: #f0f7ff; color: #1e88e5; }
-  .drop input { display: none; }
-  .opts { margin-top: 16px; display: flex; gap: 24px; align-items: center;
-          flex-wrap: wrap; }
-  .opts label { font-size: 14px; color: #444; }
-  .opts input[type=number] { width: 80px; padding: 4px 8px; }
-  button { background: #1e88e5; color: #fff; border: 0; padding: 10px 20px;
-           border-radius: 6px; font-size: 15px; cursor: pointer;
-           margin-top: 18px; }
-  button:disabled { background: #aaa; cursor: not-allowed; }
-  .files { margin-top: 12px; font-size: 13px; color: #555; }
-  .files li { list-style: none; }
-  .spinner { display: none; margin: 16px 0; color: #555; }
-  .spinner.on { display: block; }
+  :root {
+    --blue-900: #0f172a;
+    --blue-800: #1e3a8a;
+    --blue-700: #1d4ed8;
+    --blue-600: #2563eb;
+    --blue-500: #3b82f6;
+    --blue-100: #dbeafe;
+    --blue-50: #eff6ff;
+    --white: #ffffff;
+    --gray-500: #64748b;
+    --gray-200: #e2e8f0;
+    --success: #10b981;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background:
+      radial-gradient(circle at top left, rgba(59, 130, 246, 0.35), transparent 35%),
+      linear-gradient(135deg, #eff6ff 0%, #dbeafe 40%, #ffffff 100%);
+    color: var(--blue-900);
+  }
+
+  .page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 20px;
+  }
+
+  .shell {
+    width: 100%;
+    max-width: 1050px;
+    display: grid;
+    grid-template-columns: 1fr 420px;
+    gap: 32px;
+    align-items: center;
+  }
+
+  .hero {
+    padding: 20px;
+  }
+
+  .badge-top {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: rgba(37, 99, 235, 0.1);
+    color: var(--blue-700);
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 24px;
+  }
+
+  h1 {
+    font-size: 54px;
+    line-height: 1.05;
+    margin: 0 0 20px;
+    letter-spacing: -1.5px;
+  }
+
+  h1 span {
+    color: var(--blue-600);
+  }
+
+  .lead {
+    font-size: 18px;
+    line-height: 1.7;
+    color: #334155;
+    max-width: 620px;
+    margin-bottom: 28px;
+  }
+
+  .features {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    margin-top: 30px;
+  }
+
+  .feature {
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 18px;
+    padding: 16px;
+    backdrop-filter: blur(10px);
+  }
+
+  .feature strong {
+    display: block;
+    color: var(--blue-800);
+    margin-bottom: 4px;
+  }
+
+  .feature small {
+    color: var(--gray-500);
+    line-height: 1.4;
+  }
+
+  .card {
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 28px;
+    padding: 28px;
+    box-shadow:
+      0 25px 60px rgba(37, 99, 235, 0.18),
+      0 8px 24px rgba(15, 23, 42, 0.06);
+    backdrop-filter: blur(20px);
+  }
+
+  .card h2 {
+    margin: 0 0 8px;
+    font-size: 26px;
+  }
+
+  .card p {
+    margin: 0 0 22px;
+    color: var(--gray-500);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .drop {
+    display: block;
+    border: 2px dashed #93c5fd;
+    border-radius: 22px;
+    padding: 34px 22px;
+    text-align: center;
+    background: linear-gradient(180deg, #eff6ff, #ffffff);
+    cursor: pointer;
+    transition: 0.2s ease;
+  }
+
+  .drop:hover,
+  .drop.over {
+    border-color: var(--blue-600);
+    background: #dbeafe;
+    transform: translateY(-2px);
+  }
+
+  .drop input {
+    display: none;
+  }
+
+  .upload-icon {
+    width: 58px;
+    height: 58px;
+    margin: 0 auto 14px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, var(--blue-600), var(--blue-500));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 28px;
+    box-shadow: 0 12px 28px rgba(37, 99, 235, 0.3);
+  }
+
+  .drop-title {
+    font-weight: 700;
+    color: var(--blue-900);
+    margin-bottom: 6px;
+  }
+
+  .drop-subtitle {
+    color: var(--gray-500);
+    font-size: 13px;
+  }
+
+  .files {
+    margin: 16px 0 0;
+    padding: 0;
+    text-align: left;
+    color: #334155;
+    font-size: 13px;
+  }
+
+  .files li {
+    list-style: none;
+    padding: 8px 10px;
+    background: var(--blue-50);
+    border-radius: 10px;
+    margin-top: 6px;
+  }
+
+  .opts {
+    margin-top: 22px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+  }
+
+  .field input[type=number] {
+    width: 100%;
+    border: 1px solid var(--gray-200);
+    border-radius: 12px;
+    padding: 10px 12px;
+    outline: none;
+    color: var(--blue-900);
+    background: white;
+  }
+
+  .field input[type=number]:focus {
+    border-color: var(--blue-500);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+  }
+
+  .checks {
+    margin-top: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .checks label {
+    font-size: 14px;
+    color: #334155;
+    background: #f8fafc;
+    border: 1px solid var(--gray-200);
+    padding: 9px 12px;
+    border-radius: 999px;
+  }
+
+  button {
+    width: 100%;
+    margin-top: 22px;
+    border: none;
+    border-radius: 16px;
+    padding: 15px 20px;
+    font-size: 16px;
+    font-weight: 700;
+    color: white;
+    background: linear-gradient(135deg, var(--blue-700), var(--blue-500));
+    cursor: pointer;
+    box-shadow: 0 14px 30px rgba(37, 99, 235, 0.35);
+    transition: 0.2s ease;
+  }
+
+  button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 18px 38px rgba(37, 99, 235, 0.42);
+  }
+
+  button:disabled {
+    background: #94a3b8;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .spinner {
+    display: none;
+    margin-top: 16px;
+    padding: 12px 14px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    color: var(--blue-700);
+    border-radius: 14px;
+    font-size: 14px;
+  }
+
+  .spinner.on {
+    display: block;
+  }
+
+  @media (max-width: 900px) {
+    .shell {
+      grid-template-columns: 1fr;
+    }
+
+    h1 {
+      font-size: 40px;
+    }
+
+    .features {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>
 </head>
+
 <body>
-<div class="wrap">
-  <h1>DocBank Layout Extractor</h1>
-  <p class="lead">Upload page images <b>or PDF files</b>. PDFs are rendered
-    page-by-page (up to 25 pages each). The server runs YOLO detection, then
-    PaddleOCR for text and pix2tex for LaTeX formulas, and gives you the
-    results inline plus a downloadable JSON.</p>
-  <p class="lead" style="font-size:13px;color:#555;">
-    <b>What's running under the hood:</b> the same YOLOv8 model trained on
-    DocBank that powers the CLI batch run (mAP@0.5 = 0.50). Every text
-    crop hits PaddleOCR in <i>recognition-only</i> mode (~0.4 s/det),
-    every formula crop hits pix2tex with <code>max_seq_len=256</code> and
-    greedy decoding (~18 s/det). Results are cached by crop hash — the
-    second time you upload the same file, OCR finishes in seconds.<br>
-    <b>Tuning:</b> the form below lets you trade speed for recall. Defaults
-    are tuned so a 5-10 page PDF finishes in under 2 minutes on CPU.</p>
+<div class="page">
+  <div class="shell">
 
-  <form id="uploadForm" method="post" action="/upload" enctype="multipart/form-data">
-    <label class="drop" id="drop">
-      <input type="file" name="images" id="filesInput" multiple
-             accept=".jpg,.jpeg,.png,.bmp,.tif,.tiff,.pdf">
-      <div id="dropText"><b>Click to choose files</b> or drag &amp; drop here.<br>
-        <small>JPG / PNG / PDF, multiple files allowed.</small></div>
-      <ul class="files" id="fileList"></ul>
-    </label>
+    <section class="hero">
+      <div class="badge-top">AI-powered document reconstruction</div>
 
-    <div class="opts">
-      <label title="YOLO detection threshold">Detect conf &ge;
-        <input type="number" name="conf" min="0.05" max="0.95" step="0.05" value="0.25">
-      </label>
-      <label title="Skip OCR for crops below this detection confidence">OCR conf &ge;
-        <input type="number" name="min_ocr_conf" min="0" max="1" step="0.05" value="0.30">
-      </label>
-      <label title="Skip OCR for crops smaller than this many pixels squared">Min area
-        <input type="number" name="min_ocr_area" min="0" max="100000" step="100" value="600">
-      </label>
-      <label title="Stricter area threshold for formula crops only — pix2tex on CPU is the slow path">Min formula area
-        <input type="number" name="min_formula_area" min="0" max="100000" step="100" value="2000">
-      </label>
-      <label title="Hard cap on number of formula crops processed">Max formulas
-        <input type="number" name="max_formulas" min="0" max="10000" step="10" value="">
-      </label>
-      <label><input type="checkbox" name="text_ocr" checked> Text OCR</label>
-      <label><input type="checkbox" name="formula_ocr" checked> LaTeX OCR</label>
-      <label title="Skip OCR for crops we have already seen this session"><input type="checkbox" name="use_cache" checked> Use cache</label>
-    </div>
+      <h1>Convert document images into <span>LaTeX PDF</span></h1>
 
-    <button id="submitBtn" type="submit">Extract</button>
-    <div class="spinner" id="spinner">Processing… first request loads the
-      OCR models (~30 s). Later uploads are fast.</div>
-  </form>
+      <p class="lead">
+        Upload a photo, scanned page or PDF. The platform detects text blocks,
+        formulas and images, recognizes their content and recreates the page as
+        a downloadable PDF.
+      </p>
+
+      <div class="features">
+        <div class="feature">
+          <strong>YOLOv8 Layout Detection</strong>
+          <small>Detects text, formulas and image regions using the trained DocBank model.</small>
+        </div>
+        <div class="feature">
+          <strong>OCR + LaTeX OCR</strong>
+          <small>Uses OCR for text and pix2tex for mathematical formulas.</small>
+        </div>
+        <div class="feature">
+          <strong>Fast Local Processing</strong>
+          <small>The model is already trained, so the web app only runs inference.</small>
+        </div>
+        <div class="feature">
+          <strong>PDF Output</strong>
+          <small>Returns a reconstructed PDF instead of only JSON results.</small>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Upload file</h2>
+      <p>Supported formats: JPG, PNG, TIFF and PDF.</p>
+
+      <form id="uploadForm" method="post" action="/upload" enctype="multipart/form-data">
+        <label class="drop" id="drop">
+          <input type="file" name="images" id="filesInput" multiple
+                 accept=".jpg,.jpeg,.png,.bmp,.tif,.tiff,.pdf">
+
+          <div class="upload-icon">↑</div>
+          <div class="drop-title">Click or drag files here</div>
+          <div class="drop-subtitle">Your reconstructed PDF will be generated automatically.</div>
+
+          <ul class="files" id="fileList"></ul>
+        </label>
+
+        <div class="opts">
+          <div class="field">
+            <label>Detection confidence</label>
+            <input type="number" name="conf" min="0.05" max="0.95" step="0.05" value="0.25">
+          </div>
+
+          <div class="field">
+            <label>OCR confidence</label>
+            <input type="number" name="min_ocr_conf" min="0" max="1" step="0.05" value="0.30">
+          </div>
+
+          <div class="field">
+            <label>Min text area</label>
+            <input type="number" name="min_ocr_area" min="0" max="100000" step="100" value="600">
+          </div>
+
+          <div class="field">
+            <label>Min formula area</label>
+            <input type="number" name="min_formula_area" min="0" max="100000" step="100" value="2000">
+          </div>
+        </div>
+
+        <div class="checks">
+          <label><input type="checkbox" name="text_ocr" checked> Text OCR</label>
+          <label><input type="checkbox" name="formula_ocr" checked> Formula OCR</label>
+          <label><input type="checkbox" name="use_cache" checked> Cache</label>
+        </div>
+
+        <button id="submitBtn" type="submit">Generate PDF</button>
+
+        <div class="spinner" id="spinner">
+          Processing file… If this is the first run, loading OCR models may take a little longer.
+        </div>
+      </form>
+    </section>
+
+  </div>
 </div>
 
 <script>
@@ -219,24 +658,47 @@ _INDEX_HTML = """<!doctype html>
     list.innerHTML = '';
     for (const f of inp.files) {
       const li = document.createElement('li');
-      li.textContent = '• ' + f.name + ' (' + Math.round(f.size/1024) + ' KB)';
+      li.textContent = '• ' + f.name + ' (' + Math.round(f.size / 1024) + ' KB)';
       list.appendChild(li);
     }
   }
+
   inp.addEventListener('change', refresh);
-  ;['dragenter','dragover'].forEach(ev =>
-    drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
-  ;['dragleave','drop'].forEach(ev =>
-    drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-  drop.addEventListener('drop', e => { inp.files = e.dataTransfer.files; refresh(); });
-  form.addEventListener('submit', () => {
-    if (!inp.files.length) { return false; }
-    btn.disabled = true; btn.textContent = 'Working…'; spin.classList.add('on');
+
+  ['dragenter', 'dragover'].forEach(ev =>
+    drop.addEventListener(ev, e => {
+      e.preventDefault();
+      drop.classList.add('over');
+    })
+  );
+
+  ['dragleave', 'drop'].forEach(ev =>
+    drop.addEventListener(ev, e => {
+      e.preventDefault();
+      drop.classList.remove('over');
+    })
+  );
+
+  drop.addEventListener('drop', e => {
+    inp.files = e.dataTransfer.files;
+    refresh();
+  });
+
+  form.addEventListener('submit', e => {
+    if (!inp.files.length) {
+      e.preventDefault();
+      return false;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Generating PDF…';
+    spin.classList.add('on');
   });
 </script>
 </body>
 </html>
 """
+
 
 
 _RESULTS_HEAD = """<!doctype html>
@@ -522,8 +984,7 @@ def create_app(cfg: PipelineConfig | None = None):
     """Build a Flask app bound to `cfg`. Lazy import so flask is optional."""
     try:
         from flask import (
-            Flask, abort, redirect, render_template_string,
-            request, send_file, send_from_directory, url_for,
+            Flask, abort, request, send_file, send_from_directory,
         )
         from werkzeug.utils import secure_filename
     except ImportError as e:
@@ -533,7 +994,9 @@ def create_app(cfg: PipelineConfig | None = None):
 
     if cfg is None:
         cfg = PipelineConfig()
+
     cfg.ensure_dirs()
+
     web_root = cfg.output_dir / "web"
     web_root.mkdir(parents=True, exist_ok=True)
 
@@ -548,6 +1011,7 @@ def create_app(cfg: PipelineConfig | None = None):
     def upload():
         files = request.files.getlist("images")
         files = [f for f in files if f and f.filename]
+
         if not files:
             return ("No files uploaded.", 400)
 
@@ -588,29 +1052,35 @@ def create_app(cfg: PipelineConfig | None = None):
         inputs_dir = job_dir / "inputs"
         inputs_dir.mkdir(parents=True, exist_ok=True)
 
-        # Save uploads to disk; expand any PDFs into per-page JPGs.
+        # Save uploads to disk; expand PDFs into images.
         saved: list[Path] = []
+
         for f in files:
             name = secure_filename(f.filename or "")
+
             if not name:
                 continue
+
             ext = Path(name).suffix.lower()
+
             if ext not in ALLOWED_EXTS:
                 continue
+
             target = inputs_dir / name
             f.save(target)
+
             if ext in PDF_EXTS:
                 try:
-                    pages = _explode_pdf(target, inputs_dir)
+                    pages_from_pdf = _explode_pdf(target, inputs_dir)
                 except ImportError as e:
                     shutil.rmtree(job_dir, ignore_errors=True)
                     return (str(e), 500)
                 except Exception as e:
                     log.exception("PDF rendering failed for %s", name)
+                    shutil.rmtree(job_dir, ignore_errors=True)
                     return (f"Failed to render PDF {name}: {e}", 400)
-                saved.extend(pages)
-                # Keep the original PDF in inputs/ for download but don't run
-                # YOLO on it.
+
+                saved.extend(pages_from_pdf)
             else:
                 saved.append(target)
 
@@ -618,14 +1088,23 @@ def create_app(cfg: PipelineConfig | None = None):
             shutil.rmtree(job_dir, ignore_errors=True)
             return ("No valid image or PDF files.", 400)
 
-        log.info("Job %s: %d file(s), conf=%.2f, text=%s, formula=%s",
-                 job_id, len(saved), conf_v, do_text, do_formula)
+        log.info(
+            "Job %s: %d file(s), conf=%.2f, text=%s, formula=%s",
+            job_id,
+            len(saved),
+            conf_v,
+            do_text,
+            do_formula,
+        )
 
         try:
             pages, elapsed = _process_uploads(
-                cfg, job_dir, saved,
+                cfg,
+                job_dir,
+                saved,
                 conf=conf_v,
-                do_text=do_text, do_formula=do_formula,
+                do_text=do_text,
+                do_formula=do_formula,
                 min_ocr_conf=min_ocr_conf,
                 min_ocr_area=min_ocr_area,
                 min_formula_area=min_formula_area,
@@ -636,37 +1115,84 @@ def create_app(cfg: PipelineConfig | None = None):
             log.exception("Job %s failed", job_id)
             return (f"Pipeline error: {e}", 500)
 
-        # Persist results.json
-        (job_dir / "results.json").write_text(
-            json.dumps({
-                "job_id": job_id,
-                "elapsed_seconds": round(elapsed, 2),
-                "pages": pages,
-            }, indent=2, ensure_ascii=False),
+        # This is the full structured result from the model.
+        results_payload = {
+            "job_id": job_id,
+            "elapsed_seconds": round(elapsed, 2),
+            "pages": pages,
+        }
+
+        # Save results.json as backup/debug output.
+        results_json_path = job_dir / "results.json"
+        results_json_path.write_text(
+            json.dumps(results_payload, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
 
-        return redirect(url_for("results", job_id=job_id))
+        # Convert model results to LaTeX.
+        tex_path = job_dir / "result.tex"
+
+        try:
+            _results_to_tex(results_payload, tex_path)
+        except Exception as e:
+            log.exception("Failed to create LaTeX for job %s", job_id)
+            return (f"Failed to create LaTeX file: {e}", 500)
+
+        # Compile LaTeX to PDF.
+        try:
+            pdf_path = _compile_tex_to_pdf(tex_path)
+        except Exception as e:
+            log.exception("Failed to compile PDF for job %s", job_id)
+            return (
+                "The model processed the file, but PDF compilation failed. "
+                f"Error: {e}. "
+                "Make sure MiKTeX or TeX Live is installed and pdflatex is available.",
+                500,
+            )
+
+        log.info(
+            "Job %s finished in %.2fs. PDF: %s",
+            job_id,
+            elapsed,
+            pdf_path,
+        )
+
+        # Return final PDF directly to user.
+        return send_file(
+            pdf_path,
+            as_attachment=True,
+            download_name="reconstructed_document.pdf",
+            mimetype="application/pdf",
+        )
 
     @app.route("/jobs/<job_id>/results", methods=["GET"])
     @app.route("/jobs/<job_id>", methods=["GET"])
     def results(job_id: str):
         job_dir = web_root / secure_filename(job_id)
         rj = job_dir / "results.json"
+
         if not rj.is_file():
             abort(404)
+
         payload = json.loads(rj.read_text(encoding="utf-8"))
+
         html_doc = _render_results(
-            job_id, job_dir, payload["pages"], payload.get("elapsed_seconds", 0)
+            job_id,
+            job_dir,
+            payload["pages"],
+            payload.get("elapsed_seconds", 0),
         )
+
         return html_doc
 
     @app.route("/jobs/<job_id>/results.json")
     def results_json(job_id: str):
         job_dir = web_root / secure_filename(job_id)
         rj = job_dir / "results.json"
+
         if not rj.is_file():
             abort(404)
+
         return send_file(
             rj,
             mimetype="application/json",
@@ -674,12 +1200,28 @@ def create_app(cfg: PipelineConfig | None = None):
             download_name=f"docbank_{job_id}.json",
         )
 
-    # Serve images from the per-job directory.
+    @app.route("/jobs/<job_id>/result.pdf")
+    def result_pdf(job_id: str):
+        job_dir = web_root / secure_filename(job_id)
+        pdf_path = job_dir / "result.pdf"
+
+        if not pdf_path.is_file():
+            abort(404)
+
+        return send_file(
+            pdf_path,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name="reconstructed_document.pdf",
+        )
+
     @app.route("/jobs/<job_id>/<path:rel>")
     def job_file(job_id: str, rel: str):
         job_dir = web_root / secure_filename(job_id)
+
         if not job_dir.is_dir():
             abort(404)
+
         return send_from_directory(job_dir, rel)
 
     return app
