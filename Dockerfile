@@ -26,6 +26,8 @@ ENV PYTHONUNBUFFERED=1 \
     # HF Spaces runs as a non-root user; give PaddleOCR (~/.paddleocr) a
     # writable HOME so its model download doesn't fail at runtime.
     HOME=/tmp/home \
+    # Writable TeX cache dir (default lives under a root-owned path).
+    TEXMFVAR=/tmp/texmf-var \
     # Default port; platforms that inject $PORT (Render) override at runtime.
     PORT=7860
 
@@ -35,8 +37,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         texlive-latex-base texlive-latex-recommended texlive-latex-extra \
         texlive-fonts-recommended lmodern \
         texlive-xetex texlive-lang-cjk fonts-noto-cjk \
-        ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
+        fontconfig ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && fc-cache -f
 
 WORKDIR /app
 
@@ -52,8 +55,8 @@ RUN pip install -r requirements.txt
 COPY . .
 
 # Make runtime cache/output dirs world-writable (non-root hosts like HF Spaces).
-RUN mkdir -p /tmp/docbank /tmp/cache/hf /tmp/cache/mpl /tmp/home \
-    && chmod -R 777 /tmp/docbank /tmp/cache /tmp/home
+RUN mkdir -p /tmp/docbank /tmp/cache/hf /tmp/cache/mpl /tmp/home /tmp/texmf-var \
+    && chmod -R 777 /tmp/docbank /tmp/cache /tmp/home /tmp/texmf-var
 
 EXPOSE 7860
 

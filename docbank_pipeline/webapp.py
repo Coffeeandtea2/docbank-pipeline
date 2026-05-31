@@ -157,7 +157,6 @@ def _results_to_tex(results: dict, tex_path: Path) -> Path:
         r"\usepackage{fontspec}",
         r"\usepackage{xeCJK}",
         r"\setCJKmainfont{Noto Sans CJK KR}",
-        r"\xeCJKsetup{CJKecglue={\hskip 0pt plus 0.08\baselineskip}}",
         r"\usepackage{amsmath, amssymb}",
         r"\usepackage{graphicx}",
         r"\usepackage{geometry}",
@@ -230,29 +229,46 @@ def _compile_tex_to_pdf(tex_path: Path) -> Path:
     import subprocess
 
     out_dir = tex_path.parent
+    pdf_path = tex_path.with_suffix(".pdf")
+    log_path = tex_path.with_suffix(".log")
 
+    # NOTE: no `-halt-on-error`. XeLaTeX frequently exits non-zero on
+    # recoverable issues (e.g. a single malformed recognised formula) while
+    # still producing a perfectly usable PDF. We therefore judge success by
+    # whether the PDF was written, not by the exit code. Two passes settle any
+    # layout/box references.
     cmd = [
         "xelatex",
         "-interaction=nonstopmode",
-        "-halt-on-error",
         "-output-directory",
         str(out_dir),
         str(tex_path),
     ]
 
-    subprocess.run(
-        cmd,
-        cwd=str(out_dir),
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-
-    pdf_path = tex_path.with_suffix(".pdf")
+    proc = None
+    for _ in range(2):
+        proc = subprocess.run(
+            cmd,
+            cwd=str(out_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        if not pdf_path.exists():
+            break  # hard failure — don't bother with a second pass
 
     if not pdf_path.exists():
-        raise RuntimeError(f"PDF was not created: {pdf_path}")
+        # Surface the real cause: tail of the .log (falls back to stdout).
+        tail = ""
+        try:
+            log_txt = log_path.read_text(encoding="utf-8", errors="replace")
+            tail = "\n".join(log_txt.splitlines()[-40:])
+        except OSError:
+            tail = ((proc.stdout if proc else "") or "")[-2000:]
+        rc = proc.returncode if proc else "?"
+        raise RuntimeError(
+            f"xelatex produced no PDF (exit {rc}). Log tail:\n{tail}"
+        )
 
     return pdf_path
 
