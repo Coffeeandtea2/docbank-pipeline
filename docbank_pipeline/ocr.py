@@ -134,11 +134,17 @@ def _get_paddleocr():
     lang = os.environ.get("OCR_LANG", "korean").strip() or "korean"
     log.info("Loading PaddleOCR (lang=%s; first run downloads weights ~300MB)...", lang)
     last_err: Exception | None = None
-    # We pass `use_angle_cls=False` because our YOLO crops are already
-    # axis-aligned. Angle classification adds ~30% per call for no gain.
+    # `enable_mkldnn=False` is critical: Paddle 3.x's PIR runtime + oneDNN hit
+    #   "(Unimplemented) ConvertPirAttribute2RuntimeAttribute ... onednn"
+    # which fails EVERY OCR call on CPU. The global FLAGS_use_mkldnn=0 above is
+    # not enough — PaddleOCR re-enables it unless told via the constructor.
+    # `use_angle_cls=False`: our crops are axis-aligned, angle cls is wasted.
     for kwargs in (
+        {"use_angle_cls": False, "lang": lang, "show_log": False, "enable_mkldnn": False},
+        {"use_angle_cls": False, "lang": lang, "enable_mkldnn": False},
+        {"lang": lang, "enable_mkldnn": False},
+        {"lang": lang, "use_onednn": False},
         {"use_angle_cls": False, "lang": lang, "show_log": False},
-        {"use_angle_cls": False, "lang": lang},
         {"lang": lang},
         {},
     ):
