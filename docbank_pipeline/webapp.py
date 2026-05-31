@@ -970,11 +970,9 @@ def _process_uploads(
     # (NOT per-job) so it persists across users.
     cache_path = cfg.output_dir / "web_ocr_cache.json"
 
-    # In full-page mode YOLO text boxes are discarded, so don't waste time
-    # OCR-ing them; _enrich still recognises formulas.
     _enrich(
         detections,
-        do_text=do_text and not fullpage_text,
+        do_text=do_text,
         do_formula=do_formula,
         min_ocr_conf=min_ocr_conf,
         min_ocr_area=min_ocr_area,
@@ -995,18 +993,19 @@ def _process_uploads(
         dets = by_image.get(str(img_path), [])
 
         if fullpage_text:
-            # Keep YOLO's non-text regions (image/formula), drop its text boxes,
-            # and rebuild text from a full-page OCR pass.
-            non_text = [d for d in dets if d.get("class_name") != "text"]
-            block_boxes = [
-                d["bbox"] for d in non_text
-                if d.get("class_name") in ("image", "formula") and d.get("bbox")
+            # ADDITIVE: keep everything YOLO found, then add any text lines the
+            # detector missed (the common failure on non-academic layouts).
+            # Skip full-page lines that duplicate an existing YOLO text box or
+            # sit inside a formula box (those are recognised separately).
+            skip_boxes = [
+                d["bbox"] for d in dets
+                if d.get("class_name") in ("text", "formula") and d.get("bbox")
             ]
-            text_dets: list[dict] = []
+            added = 0
             for ln in ocr_full_page(img_path, min_conf=min_ocr_conf or 0.3):
-                if _center_inside(ln["bbox"], block_boxes):
-                    continue  # text sitting inside a figure/formula box
-                text_dets.append({
+                if _center_inside(ln["bbox"], skip_boxes):
+                    continue
+                dets.append({
                     "image": img_path,
                     "class_name": "text",
                     "confidence": ln["confidence"],
@@ -1015,10 +1014,10 @@ def _process_uploads(
                     "recognition_kind": "fullpage_ocr",
                     "crop_path": None,
                 })
-            dets = text_dets + non_text
+                added += 1
             log.info(
-                "Page %s: %d full-page text line(s) + %d non-text region(s)",
-                img_path.name, len(text_dets), len(non_text),
+                "Page %s: added %d full-page text line(s) (YOLO had %d det)",
+                img_path.name, added, len(by_image.get(str(img_path), [])),
             )
 
         boxed = boxes_dir / img_path.name
