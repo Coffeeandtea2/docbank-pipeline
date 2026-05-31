@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libglib2.0-0 libgl1 libgomp1 libsm6 libxext6 libxrender1 \
         texlive-latex-base texlive-latex-recommended texlive-latex-extra \
         texlive-fonts-recommended lmodern \
-        texlive-xetex texlive-lang-cjk fonts-noto-cjk \
+        texlive-xetex texlive-lang-cjk texlive-lang-chinese fonts-noto-cjk \
         fontconfig ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && fc-cache -f
