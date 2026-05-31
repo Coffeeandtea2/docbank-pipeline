@@ -1,3 +1,12 @@
+---
+title: DocBank Pipeline
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # DocBank → YOLO → OCR pipeline
 
 A small, resumable pipeline that:
