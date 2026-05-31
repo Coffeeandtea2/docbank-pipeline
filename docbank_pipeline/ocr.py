@@ -313,6 +313,91 @@ def recognize_text_with_paddleocr(image_path: Path | str) -> str:
     return "\n".join(lines)
 
 
+def _poly_to_bbox(poly) -> list:
+    """Convert a PaddleOCR quad ([[x,y]*4]) or [x1,y1,x2,y2] to [x1,y1,x2,y2]."""
+    try:
+        xs = [float(p[0]) for p in poly]
+        ys = [float(p[1]) for p in poly]
+        return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+    except (TypeError, ValueError, IndexError):
+        try:
+            x1, y1, x2, y2 = (float(v) for v in poly)
+            return [int(x1), int(y1), int(x2), int(y2)]
+        except Exception:
+            return [0, 0, 0, 0]
+
+
+def ocr_full_page(image_path: Path | str, *, min_conf: float = 0.5) -> list[dict]:
+    """Run PaddleOCR (with its OWN text detector) over a FULL page image.
+
+    Returns every recognised line as {"text", "bbox":[x1,y1,x2,y2], "confidence"}.
+    This does not depend on the YOLO layout detector, so it captures all text
+    even on document styles YOLO was never trained on (textbooks, scans, …).
+    """
+    ocr = _get_paddleocr()
+    if ocr is None:
+        return []
+    src = str(image_path)
+    items: list[dict] = []
+
+    # ---- v3 predict path -------------------------------------------------
+    if hasattr(ocr, "predict"):
+        res = None
+        try:
+            res = ocr.predict(src)
+        except Exception as e:
+            log.debug("PaddleOCR.predict full-page failed: %s", e)
+        for page in (res or []):
+            d = page if isinstance(page, dict) else getattr(page, "res", None)
+            if not isinstance(d, dict):
+                continue
+            texts = d.get("rec_texts") or []
+            scores = d.get("rec_scores") or []
+            polys = (d.get("rec_polys") or d.get("dt_polys")
+                     or d.get("rec_boxes") or [])
+            for i, t in enumerate(texts):
+                if not t:
+                    continue
+                sc = float(scores[i]) if i < len(scores) else 1.0
+                if sc < min_conf:
+                    continue
+                bbox = _poly_to_bbox(polys[i]) if i < len(polys) else [0, 0, 0, 0]
+                items.append({"text": t, "bbox": bbox, "confidence": round(sc, 4)})
+        if items:
+            return items
+
+    # ---- v2 ocr(det=True) path ------------------------------------------
+    res = None
+    try:
+        res = ocr.ocr(src, cls=False)
+    except TypeError:
+        try:
+            res = ocr.ocr(src)
+        except Exception as e:
+            log.warning("PaddleOCR full-page failed on %s: %s", src, e)
+            return items
+    except Exception as e:
+        log.warning("PaddleOCR full-page failed on %s: %s", src, e)
+        return items
+    for page in (res or []):
+        if not page:
+            continue
+        for entry in page:
+            try:
+                box, rec = entry
+                txt, sc = rec
+            except (ValueError, TypeError):
+                continue
+            if not txt or float(sc) < min_conf:
+                continue
+            items.append({
+                "text": txt,
+                "bbox": _poly_to_bbox(box),
+                "confidence": round(float(sc), 4),
+            })
+    return items
+
+
 def recognize_formula_with_latexocr(image_path: Path | str) -> str:
     """Run pix2tex (LaTeXOCR) on a formula crop, returning LaTeX source.
 

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import time
 import uuid
@@ -923,7 +924,17 @@ def _process_uploads(
     Returns (page_records, elapsed_seconds).
     """
     from .inference import run_yolo_inference
-    from .ocr import _enrich  # the fast path used by the CLI
+    from .ocr import _enrich, ocr_full_page  # fast path + full-page OCR
+
+    # The DocBank-trained detector misses large text blocks on document styles
+    # it never saw (textbooks, scans). When FULLPAGE_TEXT_OCR is on (default),
+    # we take TEXT from PaddleOCR's own full-page detector instead of relying on
+    # YOLO "text" boxes, and use YOLO only for image/formula regions.
+    fullpage_text = (
+        do_text
+        and os.environ.get("FULLPAGE_TEXT_OCR", "1").strip().lower()
+        not in ("0", "false", "no", "off", "")
+    )
 
     boxes_dir = job_dir / "boxes"
     crops_dir = job_dir / "crops"
@@ -959,9 +970,11 @@ def _process_uploads(
     # (NOT per-job) so it persists across users.
     cache_path = cfg.output_dir / "web_ocr_cache.json"
 
+    # In full-page mode YOLO text boxes are discarded, so don't waste time
+    # OCR-ing them; _enrich still recognises formulas.
     _enrich(
         detections,
-        do_text=do_text,
+        do_text=do_text and not fullpage_text,
         do_formula=do_formula,
         min_ocr_conf=min_ocr_conf,
         min_ocr_area=min_ocr_area,
@@ -980,6 +993,34 @@ def _process_uploads(
     page_records: list[dict] = []
     for img_path in inputs:
         dets = by_image.get(str(img_path), [])
+
+        if fullpage_text:
+            # Keep YOLO's non-text regions (image/formula), drop its text boxes,
+            # and rebuild text from a full-page OCR pass.
+            non_text = [d for d in dets if d.get("class_name") != "text"]
+            block_boxes = [
+                d["bbox"] for d in non_text
+                if d.get("class_name") in ("image", "formula") and d.get("bbox")
+            ]
+            text_dets: list[dict] = []
+            for ln in ocr_full_page(img_path, min_conf=min_ocr_conf or 0.3):
+                if _center_inside(ln["bbox"], block_boxes):
+                    continue  # text sitting inside a figure/formula box
+                text_dets.append({
+                    "image": img_path,
+                    "class_name": "text",
+                    "confidence": ln["confidence"],
+                    "bbox": ln["bbox"],
+                    "recognized": ln["text"],
+                    "recognition_kind": "fullpage_ocr",
+                    "crop_path": None,
+                })
+            dets = text_dets + non_text
+            log.info(
+                "Page %s: %d full-page text line(s) + %d non-text region(s)",
+                img_path.name, len(text_dets), len(non_text),
+            )
+
         boxed = boxes_dir / img_path.name
         _draw_boxes(img_path, dets, boxed)
         page_records.append({
@@ -989,6 +1030,22 @@ def _process_uploads(
         })
     elapsed = time.time() - t0
     return page_records, elapsed
+
+
+def _center_inside(inner: list, boxes: list[list]) -> bool:
+    """True if the centre of `inner` bbox falls inside any box in `boxes`."""
+    try:
+        cx = (inner[0] + inner[2]) / 2.0
+        cy = (inner[1] + inner[3]) / 2.0
+    except (TypeError, IndexError):
+        return False
+    for b in boxes:
+        try:
+            if b[0] <= cx <= b[2] and b[1] <= cy <= b[3]:
+                return True
+        except (TypeError, IndexError):
+            continue
+    return False
 
 
 def _serialise_det(det: dict) -> dict:
