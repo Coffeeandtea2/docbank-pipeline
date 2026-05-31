@@ -21,6 +21,9 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/tmp/cache/hf \
     XDG_CACHE_HOME=/tmp/cache \
     MPLCONFIGDIR=/tmp/cache/mpl \
+    # HF Spaces runs as a non-root user; give PaddleOCR (~/.paddleocr) a
+    # writable HOME so its model download doesn't fail at runtime.
+    HOME=/tmp/home \
     # Default port; platforms that inject $PORT (Render) override at runtime.
     PORT=7860
 
@@ -46,8 +49,8 @@ RUN pip install -r requirements.txt
 COPY . .
 
 # Make runtime cache/output dirs world-writable (non-root hosts like HF Spaces).
-RUN mkdir -p /tmp/docbank /tmp/cache/hf /tmp/cache/mpl \
-    && chmod -R 777 /tmp/docbank /tmp/cache
+RUN mkdir -p /tmp/docbank /tmp/cache/hf /tmp/cache/mpl /tmp/home \
+    && chmod -R 777 /tmp/docbank /tmp/cache /tmp/home
 
 EXPOSE 7860
 
