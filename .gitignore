@@ -16,6 +16,8 @@ env/
 DocBank/
 yolov8n.pt
 *.pt
+# ...except the trained detection weights we bake into the deploy image.
+!best.pt
 *.onnx
 *.engine
 *.tar

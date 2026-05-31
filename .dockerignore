@@ -1,0 +1,27 @@
+.git
+.gitignore
+.venv
+.venv-win
+venv
+env
+__pycache__
+*.pyc
+.DS_Store
+.ipynb_checkpoints
+
+# Big things we don't need inside the image (best.pt is kept on purpose).
+DocBank/
+*.zip
+*.zip.*
+*.tar
+*.onnx
+*.engine
+
+# Docs / scratch not needed at runtime.
+DocBank_Guide.pdf
+Pipeline_Validation_Report.html
+make_pdf_guide.py
+make_html_report.py
+install_log.txt
+installed_freeze.txt
+skipped_packages.txt

@@ -19,6 +19,7 @@ Each detection dict contains:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -33,6 +34,15 @@ def _resolve_weights(cfg: PipelineConfig, weights: str | Path | None) -> Path:
         p = Path(weights)
         if p.is_file():
             return p
+    # Deployment override: point at a baked-in weights file via env var
+    # (used by the Docker image / Render / HF Spaces, where there is no
+    # `runs/.../best.pt` from a local training run).
+    env_w = os.environ.get("YOLO_WEIGHTS") or os.environ.get("WEIGHTS")
+    if env_w:
+        ep = Path(env_w).expanduser()
+        if ep.is_file():
+            return ep
+        log.warning("YOLO_WEIGHTS/WEIGHTS set to %s but file not found", ep)
     candidates = list(cfg.runs_dir.glob("**/weights/best.pt"))
     if candidates:
         return max(candidates, key=lambda p: p.stat().st_mtime)

@@ -1,0 +1,20 @@
+# Render Blueprint. In the Render dashboard: New + > Blueprint > pick this repo.
+#
+# NOTE: the full ML stack (torch + paddlepaddle + pix2tex + TeX Live) needs
+# ~3-4 GB RAM. It will OOM on Free/Starter. `pro` = 4 GB. If you hit limits
+# or cost concerns, Hugging Face Spaces (Docker) gives 16 GB RAM free — see
+# DEPLOY.md.
+services:
+  - type: web
+    name: docbank-pipeline
+    runtime: docker
+    plan: pro                 # 4 GB RAM. Smaller plans OOM on model load.
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: WEIGHTS
+        value: /app/best.pt
+      - key: DATA_ROOT
+        value: /tmp/docbank
+      # Render injects PORT automatically; the app reads it. No need to set it.
