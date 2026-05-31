@@ -19,4 +19,6 @@ services:
         value: /tmp/docbank
       - key: YOLO_IMGSZ
         value: "960"            # match the detector's training resolution
+      - key: OCR_LANG
+        value: "korean"        # PaddleOCR recognition language
       # Render injects PORT automatically; the app reads it. No need to set it.

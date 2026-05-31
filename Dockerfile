@@ -16,6 +16,8 @@ ENV PYTHONUNBUFFERED=1 \
     WEIGHTS=/app/best.pt \
     # Match the detector's training resolution (args.yaml: imgsz=960).
     YOLO_IMGSZ=960 \
+    # PaddleOCR recognition language (Korean docs with Hanja). Override as needed.
+    OCR_LANG=korean \
     # Keep every model/cache download under writable /tmp (HF Spaces runs as
     # a non-root user; /app is read-only at runtime there).
     HF_HOME=/tmp/cache/hf \
@@ -32,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libglib2.0-0 libgl1 libgomp1 libsm6 libxext6 libxrender1 \
         texlive-latex-base texlive-latex-recommended texlive-latex-extra \
         texlive-fonts-recommended lmodern \
+        texlive-xetex texlive-lang-cjk fonts-noto-cjk \
         ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 

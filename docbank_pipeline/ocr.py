@@ -129,14 +129,17 @@ def _get_paddleocr():
             "Install with: pip install paddleocr paddlepaddle"
         )
         return None
-    log.info("Loading PaddleOCR (first run downloads weights, ~300MB)...")
+    # Recognition language. Default to Korean (the documents we target are
+    # Korean with Hanja); override with OCR_LANG, e.g. "en", "ch", "japan".
+    lang = os.environ.get("OCR_LANG", "korean").strip() or "korean"
+    log.info("Loading PaddleOCR (lang=%s; first run downloads weights ~300MB)...", lang)
     last_err: Exception | None = None
     # We pass `use_angle_cls=False` because our YOLO crops are already
     # axis-aligned. Angle classification adds ~30% per call for no gain.
     for kwargs in (
-        {"use_angle_cls": False, "lang": "en", "show_log": False},
-        {"use_angle_cls": False, "lang": "en"},
-        {"lang": "en"},
+        {"use_angle_cls": False, "lang": lang, "show_log": False},
+        {"use_angle_cls": False, "lang": lang},
+        {"lang": lang},
         {},
     ):
         try:
@@ -241,15 +244,16 @@ def recognize_text_with_paddleocr(image_path: Path | str) -> str:
         except Exception as e:
             log.debug("PaddleOCR.predict failed on %s: %s", src, e)
             result = None
-    # ---- v2 fast path: rec-only -----------------------------------------
+    # ---- v2 path: detect + recognise EVERY line in the crop -------------
     if result is None:
         try:
-            # Skip det+cls; Paddle treats input as a single already-cropped
-            # text line and only runs the recognition net.
-            result = ocr.ocr(src, det=False, cls=False, rec=True)
+            # Our YOLO "text" boxes are usually multi-line paragraphs, so keep
+            # PaddleOCR's line detector ON (det=True). rec-only would read just
+            # the first line and silently drop the rest of the paragraph.
+            result = ocr.ocr(src, det=True, cls=False, rec=True)
         except TypeError:
             # Older Paddle versions don't accept all three kwargs.
-            for kw in (dict(det=False, cls=False), dict(cls=False), {}):
+            for kw in (dict(det=True, cls=False), dict(cls=False), {}):
                 try:
                     result = ocr.ocr(src, **kw)
                     break

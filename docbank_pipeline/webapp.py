@@ -149,10 +149,15 @@ def _results_to_tex(results: dict, tex_path: Path) -> Path:
     This version prioritizes correctness and readable output.
     """
 
+    # XeLaTeX + xeCJK so Korean / Hanja (and any CJK) render. Plain pdflatex
+    # with inputenc/T1 fontenc cannot typeset these glyphs at all, which is
+    # what produced the near-empty output PDFs.
     lines = [
-        r"\documentclass[12pt]{article}",
-        r"\usepackage[utf8]{inputenc}",
-        r"\usepackage[T1]{fontenc}",
+        r"\documentclass[11pt]{article}",
+        r"\usepackage{fontspec}",
+        r"\usepackage{xeCJK}",
+        r"\setCJKmainfont{Noto Sans CJK KR}",
+        r"\xeCJKsetup{CJKecglue={\hskip 0pt plus 0.08\baselineskip}}",
         r"\usepackage{amsmath, amssymb}",
         r"\usepackage{graphicx}",
         r"\usepackage{geometry}",
@@ -216,15 +221,18 @@ def _results_to_tex(results: dict, tex_path: Path) -> Path:
 
 def _compile_tex_to_pdf(tex_path: Path) -> Path:
     """
-    Compile LaTeX file to PDF using pdflatex.
-    Requires LaTeX installed locally, e.g. MiKTeX or TeX Live.
+    Compile the LaTeX file to PDF using XeLaTeX.
+
+    XeLaTeX (not pdflatex) is required: documents may contain Korean / Hanja /
+    other CJK text, rendered via xeCJK + a CJK font (Noto Sans CJK KR). Needs a
+    TeX install with xetex + the CJK font (see the Dockerfile).
     """
     import subprocess
 
     out_dir = tex_path.parent
 
     cmd = [
-        "pdflatex",
+        "xelatex",
         "-interaction=nonstopmode",
         "-halt-on-error",
         "-output-directory",
@@ -1146,7 +1154,8 @@ def create_app(cfg: PipelineConfig | None = None):
             return (
                 "The model processed the file, but PDF compilation failed. "
                 f"Error: {e}. "
-                "Make sure MiKTeX or TeX Live is installed and pdflatex is available.",
+                "Make sure TeX Live with XeLaTeX (xelatex) and a CJK font "
+                "(Noto Sans CJK KR) is installed.",
                 500,
             )
 
