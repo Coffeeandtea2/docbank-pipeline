@@ -17,4 +17,6 @@ services:
         value: /app/best.pt
       - key: DATA_ROOT
         value: /tmp/docbank
+      - key: YOLO_IMGSZ
+        value: "960"            # match the detector's training resolution
       # Render injects PORT automatically; the app reads it. No need to set it.

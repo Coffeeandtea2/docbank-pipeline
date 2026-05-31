@@ -74,6 +74,7 @@ def run_yolo_inference(
     iou: float = 0.45,
     save_crops: bool = True,
     device: str | None = None,
+    imgsz: int | None = None,
 ) -> list[dict]:
     """Run YOLO over `source` (file/dir/list) and return detection dicts.
 
@@ -93,7 +94,14 @@ def run_yolo_inference(
 
     model = YOLO(str(weights_path))
     dev = device or detect_device()
-    log.info("Inference device: %s, %d image(s)", dev, len(images))
+
+    # Inference image size. The detector was trained at imgsz=960, so running
+    # predict at Ultralytics' 640 default hurts recall on small text/formula
+    # rows. Resolution order: explicit arg > YOLO_IMGSZ env > cfg.yolo_imgsz.
+    if imgsz is None:
+        env_imgsz = os.environ.get("YOLO_IMGSZ")
+        imgsz = int(env_imgsz) if env_imgsz else cfg.yolo_imgsz
+    log.info("Inference device: %s, imgsz=%d, %d image(s)", dev, imgsz, len(images))
 
     if save_crops:
         for cname in cfg.yolo_classes:
@@ -105,6 +113,7 @@ def run_yolo_inference(
         source=[str(p) for p in images],
         conf=conf,
         iou=iou,
+        imgsz=imgsz,
         device=dev,
         stream=True,
         verbose=False,

@@ -14,6 +14,8 @@ ENV PYTHONUNBUFFERED=1 \
     DATA_ROOT=/tmp/docbank \
     # Baked-in trained detection weights (read by inference._resolve_weights).
     WEIGHTS=/app/best.pt \
+    # Match the detector's training resolution (args.yaml: imgsz=960).
+    YOLO_IMGSZ=960 \
     # Keep every model/cache download under writable /tmp (HF Spaces runs as
     # a non-root user; /app is read-only at runtime there).
     HF_HOME=/tmp/cache/hf \

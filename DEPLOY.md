@@ -84,6 +84,7 @@ The `Dockerfile` is used as-is. Set the internal port to `7860` in `fly.toml`.
 |-----|--------------------|---------|
 | `PORT` | `7860` | Port to bind (Render injects its own). |
 | `WEIGHTS` | `/app/best.pt` | Trained YOLO detection weights. |
+| `YOLO_IMGSZ` | `960` | Inference image size. Matches the model's training resolution (`args.yaml`); 640 hurts small-text recall. |
 | `DATA_ROOT` | `/tmp/docbank` | Writable dir for per-job artefacts + caches. |
 | `HF_TOKEN` | _(unset)_ | Only needed for dataset/training, not inference. |
 
