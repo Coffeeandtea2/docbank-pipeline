@@ -1,5 +1,5 @@
 """
-Stage 4 — Run YOLO inference on page images and crop detections.
+Stage 4 — Run DocLayout-YOLO inference on page images and crop detections.
 
 Public API:
     run_yolo_inference(cfg, source, weights=...) -> list of detections per image
@@ -7,8 +7,9 @@ Public API:
 Each detection dict contains:
     {
       "image": Path,       # source page image
-      "class_id": int,
-      "class_name": str,
+      "class_id": int,     # PIPELINE class id (0=text,1=formula,2=image)
+      "class_name": str,   # PIPELINE class name (text/formula/image)
+      "raw_class": str,    # original DocLayout class (e.g. 'isolate_formula')
       "bbox": [x1,y1,x2,y2],        # absolute pixel coords
       "bbox_norm": [cx,cy,w,h],     # YOLO-normalised
       "confidence": float,
@@ -19,7 +20,6 @@ Each detection dict contains:
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -30,24 +30,30 @@ log = logging.getLogger("docbank.inference")
 
 
 def _resolve_weights(cfg: PipelineConfig, weights: str | Path | None) -> Path:
+    # 1) explicit argument wins
     if weights:
         p = Path(weights)
         if p.is_file():
             return p
-    # Deployment override: point at a baked-in weights file via env var
-    # (used by the Docker image / Render / HF Spaces, where there is no
-    # `runs/.../best.pt` from a local training run).
-    env_w = os.environ.get("YOLO_WEIGHTS") or os.environ.get("WEIGHTS")
-    if env_w:
-        ep = Path(env_w).expanduser()
-        if ep.is_file():
-            return ep
-        log.warning("YOLO_WEIGHTS/WEIGHTS set to %s but file not found", ep)
+    # 2) a path configured on the cfg (add `layout_weights` to PipelineConfig)
+    cfg_w = getattr(cfg, "layout_weights", None)
+    if cfg_w and Path(cfg_w).is_file():
+        return Path(cfg_w)
+    # 3) fall back to a trained best.pt under runs/  -- WARNING: with the
+    #    DocLayout-YOLO swap this would load your OLD DocBank model, which is
+    #    NOT what you want. Prefer passing weights=<doclayout checkpoint>.
     candidates = list(cfg.runs_dir.glob("**/weights/best.pt"))
     if candidates:
-        return max(candidates, key=lambda p: p.stat().st_mtime)
+        chosen = max(candidates, key=lambda p: p.stat().st_mtime)
+        log.warning(
+            "No explicit weights given; falling back to %s. If you intended to "
+            "use DocLayout-YOLO, pass weights=<doclayout_yolo_*.pt> instead.",
+            chosen,
+        )
+        return chosen
     raise FileNotFoundError(
-        "No trained YOLO weights found. Pass weights=... or run `train_yolo`."
+        "No YOLO weights found. Pass weights=<doclayout checkpoint> "
+        "or set cfg.layout_weights."
     )
 
 
@@ -74,14 +80,16 @@ def run_yolo_inference(
     iou: float = 0.45,
     save_crops: bool = True,
     device: str | None = None,
-    imgsz: int | None = None,
+    imgsz: int = 1024,
 ) -> list[dict]:
-    """Run YOLO over `source` (file/dir/list) and return detection dicts.
+    """Run DocLayout-YOLO over `source` (file/dir/list) and return detection
+    dicts, with DocLayout classes remapped to the pipeline's
+    {text, formula, image} via ``cfg.class_mapping``.
 
     If `save_crops` is True, each detection's crop is written under
-    `cfg.crops_dir/<class_name>/<imgstem>_<idx>.jpg`.
+    `cfg.crops_dir/<pipeline_class>/<imgstem>_<idx>.jpg`.
     """
-    from ultralytics import YOLO  # lazy import
+    from doclayout_yolo import YOLOv10  # lazy import
     from PIL import Image  # lazy import
 
     weights_path = _resolve_weights(cfg, weights)
@@ -92,31 +100,27 @@ def run_yolo_inference(
         log.warning("No input images found.")
         return []
 
-    model = YOLO(str(weights_path))
-    dev = device or detect_device()
+    model = YOLOv10(str(weights_path))
+    model_names: dict[int, str] = dict(model.names)  # DocLayout index -> name
+    log.info("Model classes: %s", model_names)
 
-    # Inference image size. The detector was trained at imgsz=960, so running
-    # predict at Ultralytics' 640 default hurts recall on small text/formula
-    # rows. Resolution order: explicit arg > YOLO_IMGSZ env > cfg.yolo_imgsz.
-    if imgsz is None:
-        env_imgsz = os.environ.get("YOLO_IMGSZ")
-        imgsz = int(env_imgsz) if env_imgsz else cfg.yolo_imgsz
-    log.info("Inference device: %s, imgsz=%d, %d image(s)", dev, imgsz, len(images))
+    dev = device or detect_device()
+    log.info("Inference device: %s, %d image(s)", dev, len(images))
 
     if save_crops:
         for cname in cfg.yolo_classes:
             (cfg.crops_dir / cname).mkdir(parents=True, exist_ok=True)
 
     detections: list[dict] = []
-    # `stream=True` keeps memory bounded on large folders.
     results_iter: Iterable = model.predict(
         source=[str(p) for p in images],
         conf=conf,
         iou=iou,
-        imgsz=imgsz,
+        batch=12,
         device=dev,
         stream=True,
         verbose=False,
+        imgsz=imgsz,
     )
     for img_path, r in zip(images, results_iter):
         h, w = r.orig_shape
@@ -130,19 +134,32 @@ def run_yolo_inference(
             page_img = None
 
         for i in range(len(boxes)):
+            raw_id = int(boxes.cls[i].item())
+            raw_name = model_names.get(raw_id, str(raw_id))
+
+            # --- DocLayout class -> pipeline class via cfg.class_mapping ---
+            if raw_name not in cfg.class_mapping:
+                log.warning(
+                    "Unmapped layout class %r (id %d) — skipping. "
+                    "Add it to cfg.class_mapping.", raw_name, raw_id,
+                )
+                continue
+            mapped = cfg.class_mapping[raw_name]
+            if mapped is None:
+                continue  # intentionally dropped (e.g. 'abandon')
+            cls_name = mapped
+            cls_id = cfg.class_id.get(mapped, -1)
+            # ---------------------------------------------------------------
+
             xyxy = boxes.xyxy[i].tolist()
             xywh = boxes.xywhn[i].tolist()
-            cls_id = int(boxes.cls[i].item())
             conf_score = float(boxes.conf[i].item())
-            cls_name = (
-                cfg.yolo_classes[cls_id] if 0 <= cls_id < len(cfg.yolo_classes)
-                else f"cls_{cls_id}"
-            )
 
             det = {
                 "image": img_path,
                 "class_id": cls_id,
                 "class_name": cls_name,
+                "raw_class": raw_name,
                 "bbox": [round(v, 2) for v in xyxy],
                 "bbox_norm": [round(v, 6) for v in xywh],
                 "confidence": round(conf_score, 4),
@@ -167,3 +184,157 @@ def run_yolo_inference(
 
     log.info("Got %d detection(s) across %d image(s)", len(detections), len(images))
     return detections
+
+# """
+# Stage 4 — Run YOLO inference on page images and crop detections.
+
+# Public API:
+#     run_yolo_inference(cfg, source, weights=...) -> list of detections per image
+
+# Each detection dict contains:
+#     {
+#       "image": Path,       # source page image
+#       "class_id": int,
+#       "class_name": str,
+#       "bbox": [x1,y1,x2,y2],        # absolute pixel coords
+#       "bbox_norm": [cx,cy,w,h],     # YOLO-normalised
+#       "confidence": float,
+#       "crop_path": Path,            # saved crop on disk (or None if save=False)
+#     }
+# """
+
+# from __future__ import annotations
+
+# import logging
+# from pathlib import Path
+# from typing import Iterable, Sequence
+
+# from .config import PipelineConfig
+# from .utils import detect_device
+
+# log = logging.getLogger("docbank.inference")
+
+
+# def _resolve_weights(cfg: PipelineConfig, weights: str | Path | None) -> Path:
+#     if weights:
+#         p = Path(weights)
+#         if p.is_file():
+#             return p
+#     candidates = list(cfg.runs_dir.glob("**/weights/best.pt"))
+#     if candidates:
+#         return max(candidates, key=lambda p: p.stat().st_mtime)
+#     raise FileNotFoundError(
+#         "No trained YOLO weights found. Pass weights=... or run `train_yolo`."
+#     )
+
+
+# def _iter_sources(source: str | Path | Sequence[str | Path]) -> list[Path]:
+#     if isinstance(source, (str, Path)):
+#         p = Path(source)
+#         if p.is_dir():
+#             return sorted(
+#                 f for f in p.iterdir()
+#                 if f.is_file() and f.suffix.lower() in {".jpg", ".jpeg", ".png"}
+#             )
+#         if p.is_file():
+#             return [p]
+#         raise FileNotFoundError(f"Source not found: {p}")
+#     return [Path(s) for s in source]
+
+
+# def run_yolo_inference(
+#     cfg: PipelineConfig,
+#     source: str | Path | Sequence[str | Path],
+#     *,
+#     weights: str | Path | None = None,
+#     conf: float = 0.25,
+#     iou: float = 0.45,
+#     save_crops: bool = True,
+#     device: str = 'cuda',
+# ) -> list[dict]:
+#     """Run YOLO over `source` (file/dir/list) and return detection dicts.
+
+#     If `save_crops` is True, each detection's crop is written under
+#     `cfg.crops_dir/<class_name>/<imgstem>_<idx>.jpg`.
+#     """
+#     from doclayout_yolo import YOLOv10
+#     from ultralytics import YOLO  # lazy import
+#     from PIL import Image  # lazy import
+
+#     weights_path = _resolve_weights(cfg, weights)
+#     log.info("Inference with weights: %s", weights_path)
+
+#     images = _iter_sources(source)
+#     if not images:
+#         log.warning("No input images found.")
+#         return []
+
+#     model = YOLOv10(str(weights_path))
+#     dev = device or detect_device()
+#     log.info("Inference device: %s, %d image(s)", dev, len(images))
+
+#     if save_crops:
+#         for cname in cfg.yolo_classes:
+#             (cfg.crops_dir / cname).mkdir(parents=True, exist_ok=True)
+
+#     detections: list[dict] = []
+#     # `stream=True` keeps memory bounded on large folders.
+#     results_iter: Iterable = model.predict(
+#         source=[str(p) for p in images],
+#         conf=conf,
+#         iou=iou,
+#         batch=12,
+#         device=0,
+#         stream=True,
+#         verbose=False,
+#         imgsz=1024,
+#     )
+#     for img_path, r in zip(images, results_iter):
+#         h, w = r.orig_shape
+#         boxes = r.boxes
+#         if boxes is None or len(boxes) == 0:
+#             continue
+#         try:
+#             page_img = Image.open(img_path).convert("RGB") if save_crops else None
+#         except Exception as e:
+#             log.warning("Could not open %s for cropping: %s", img_path, e)
+#             page_img = None
+
+#         for i in range(len(boxes)):
+#             xyxy = boxes.xyxy[i].tolist()
+#             xywh = boxes.xywhn[i].tolist()
+#             cls_id = int(boxes.cls[i].item())
+#             conf_score = float(boxes.conf[i].item())
+#             cls_name = (
+#                 cfg.yolo_classes[cls_id] if 0 <= cls_id < len(cfg.yolo_classes)
+#                 else f"cls_{cls_id}"
+#             )
+
+#             det = {
+#                 "image": img_path,
+#                 "class_id": cls_id,
+#                 "class_name": cls_name,
+#                 "bbox": [round(v, 2) for v in xyxy],
+#                 "bbox_norm": [round(v, 6) for v in xywh],
+#                 "confidence": round(conf_score, 4),
+#                 "image_width": int(w),
+#                 "image_height": int(h),
+#                 "crop_path": None,
+#             }
+
+#             if save_crops and page_img is not None:
+#                 x1, y1, x2, y2 = (max(0, int(v)) for v in xyxy)
+#                 x2 = min(x2, w)
+#                 y2 = min(y2, h)
+#                 if x2 > x1 and y2 > y1:
+#                     crop = page_img.crop((x1, y1, x2, y2))
+#                     crop_path = (
+#                         cfg.crops_dir / cls_name
+#                         / f"{img_path.stem}_{i:03d}.jpg"
+#                     )
+#                     crop.save(crop_path, "JPEG", quality=92)
+#                     det["crop_path"] = crop_path
+#             detections.append(det)
+
+#     log.info("Got %d detection(s) across %d image(s)", len(detections), len(images))
+#     return detections

@@ -1,0 +1,22 @@
+# CPU deployment requirements (Hugging Face Space / Render via Dockerfile).
+# torch + torchvision are installed separately by the Dockerfile from the CPU
+# wheel index, so they are intentionally NOT listed here (avoids the CUDA build).
+huggingface_hub<0.26
+ultralytics>=8.1
+doclayout-yolo            # provides `from doclayout_yolo import YOLOv10`
+pillow>=10
+numpy>=1.24
+tqdm>=4.66
+opencv-python-headless>=4.8
+reportlab
+matplotlib
+
+# Web app
+flask>=3.0
+waitress>=3.0
+pymupdf>=1.24
+
+# OCR / formula recognition
+paddleocr>=2.7
+paddlepaddle>=2.6
+pix2tex>=0.1.2

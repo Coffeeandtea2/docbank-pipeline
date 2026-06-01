@@ -43,19 +43,25 @@ def _env_float(name: str, default: float) -> float:
 
 # DocBank's 12 fine-grained labels collapsed to the 3 classes we want to detect.
 DEFAULT_CLASS_MAPPING: Mapping[str, str] = {
-    "abstract": "text",
-    "author": "text",
-    "caption": "text",
-    "date": "text",
-    "footer": "text",
-    "list": "text",
-    "paragraph": "text",
-    "reference": "text",
-    "section": "text",
-    "title": "text",
-    "equation": "formula",
-    "figure": "image",
-    "table": "image",
+    "title": "text", "plain text": "text",
+    "figure_caption": "text", "table_caption": "text",
+    "table_footnote": "text", "formula_caption": "text",
+    "isolate_formula": "formula",
+    "figure": "image", "table": "image",   # or handle "table" specially
+    "abandon": None,
+    # "abstract": "text",
+    # "author": "text",
+    # "caption": "text",
+    # "date": "text",
+    # "footer": "text",
+    # "list": "text",
+    # "paragraph": "text",
+    # "reference": "text",
+    # "section": "text",
+    # "title": "text",
+    # "equation": "formula",
+    # "figure": "image",
+    # "table": "image",
 }
 
 DEFAULT_YOLO_CLASSES: tuple[str, ...] = ("text", "formula", "image")
@@ -94,12 +100,18 @@ class PipelineConfig:
         default_factory=lambda: _env_int("NUM_WORKERS", 4)
     )
 
-    yolo_model: str = "yolov8n.pt"
-    yolo_imgsz: int = 640
-    yolo_epochs: int = 50
-    yolo_batch: int = 8
+    yolo_model: str = "yolo8n.pt"
+    yolo_imgsz: int = 1024
+    yolo_epochs: int = 100
+    yolo_batch: int = 16
     yolo_patience: int = 10
 
+    # Path to the DocLayout-YOLO checkpoint used at INFERENCE time on diverse
+    # documents. If left None, run_yolo_inference falls back to a best.pt under
+    # runs/ — which is your OLD DocBank model — so set this for the new detector.
+    layout_weights: str | None = field(
+        default_factory=lambda: os.environ.get("LAYOUT_WEIGHTS")
+    )
     # -------------------------------------------------------------- classes
     class_mapping: Mapping[str, str] = field(
         default_factory=lambda: dict(DEFAULT_CLASS_MAPPING)
