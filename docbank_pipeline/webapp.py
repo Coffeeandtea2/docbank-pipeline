@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import PipelineConfig
+from .utils import IMAGE_SUFFIXES
 
 log = logging.getLogger("docbank.webapp")
 
@@ -71,7 +72,7 @@ def _draw_boxes(image_path: Path, detections: list[dict], out_path: Path) -> boo
     cv2.imwrite(str(out_path), img)
     return True
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+IMAGE_EXTS = IMAGE_SUFFIXES | {".bmp", ".tif", ".tiff"}
 PDF_EXTS = {".pdf"}
 ALLOWED_EXTS = IMAGE_EXTS | PDF_EXTS
 

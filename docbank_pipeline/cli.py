@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 from .config import PipelineConfig
-from .utils import setup_logging
+from .utils import iter_image_files, setup_logging
 
 
 def _add_common_overrides(p: argparse.ArgumentParser) -> None:
@@ -144,7 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     p_st.add_argument("--epochs", type=int, default=2)
 
     # info
-    sub.add_parser("info", help="Print resolved configuration.")
+    p_info = sub.add_parser("info", help="Print resolved configuration.")
+    _add_common_overrides(p_info)
 
     args = parser.parse_args(argv)
 
@@ -265,7 +266,10 @@ def _run_smoketest(cfg: PipelineConfig, args: argparse.Namespace) -> int:
         log.info("[4/5] training skipped (--skip-train).")
 
     log.info("[5/5] inference + OCR")
-    val_imgs = list((cfg.yolo_dataset_dir / "images" / "val").glob("*.jpg"))[:n]
+    val_imgs = iter_image_files(
+        cfg.yolo_dataset_dir / "images" / "val",
+        suffixes={".jpg"},
+    )[:n]
     if not val_imgs:
         log.error("No val images found; smoketest cannot finish inference.")
         return 1

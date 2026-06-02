@@ -10,8 +10,14 @@ import shutil
 import sys
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Collection
 
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png"})
+
+
+def _normalise_suffixes(suffixes: Collection[str]) -> frozenset[str]:
+    return frozenset(s.lower() for s in suffixes)
 
 
 def setup_logging(level: int = logging.INFO) -> logging.Logger:
@@ -48,6 +54,31 @@ def link_or_copy(src: Path, dst: Path) -> None:
         os.link(src, dst)
     except (OSError, NotImplementedError):
         shutil.copy2(src, dst)
+
+
+def is_image_file(
+    path: str | Path,
+    *,
+    suffixes: Collection[str] = IMAGE_SUFFIXES,
+) -> bool:
+    """Return True for regular files with a supported image suffix."""
+    p = Path(path)
+    return p.is_file() and p.suffix.lower() in _normalise_suffixes(suffixes)
+
+
+def iter_image_files(
+    folder: str | Path,
+    *,
+    suffixes: Collection[str] = IMAGE_SUFFIXES,
+    recursive: bool = False,
+) -> list[Path]:
+    """Return image files in stable order."""
+    root = Path(folder)
+    if not root.is_dir():
+        return []
+    supported = _normalise_suffixes(suffixes)
+    paths = root.rglob("*") if recursive else root.iterdir()
+    return sorted(p for p in paths if p.is_file() and p.suffix.lower() in supported)
 
 
 # --- marker / sentinel files ------------------------------------------------

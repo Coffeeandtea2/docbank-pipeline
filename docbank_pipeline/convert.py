@@ -30,7 +30,7 @@ from typing import Iterable, Mapping
 from tqdm.auto import tqdm
 
 from .config import PipelineConfig
-from .utils import link_or_copy, mark_stage_done, stage_done
+from .utils import iter_image_files, link_or_copy, mark_stage_done, stage_done
 
 log = logging.getLogger("docbank.convert")
 
@@ -51,7 +51,7 @@ def _build_image_index(image_dir: Path) -> dict[str, Path]:
     """
     log.info("Indexing images under %s ...", image_dir)
     index: dict[str, Path] = {}
-    files = list(image_dir.rglob("*.jpg"))
+    files = iter_image_files(image_dir, suffixes={".jpg"}, recursive=True)
     for f in tqdm(files, desc="index", unit="img"):
         # Last write wins; basenames are unique in DocBank.
         index[f.name] = f
