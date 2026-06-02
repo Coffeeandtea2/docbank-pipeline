@@ -87,13 +87,13 @@ def cover():
     out.append(P(
         "A complete, resumable pipeline that detects text, formulas and "
         "figures on document pages, recognises them with PaddleOCR / pix2tex, "
-        "and exposes the results through a CLI <i>and</i> an upload-and-extract "
-        "web app.", BODY))
+        "and exposes the results through a CLI, an upload-and-extract "
+        "web app, and a Telegram bot.", BODY))
     out.append(Spacer(1, 0.6 * cm))
     out.append(P("Project Guide for the team", H3))
     out.append(P("Sections covered:", BODY))
     out.append(P("&bull; Code analysis — goal, modules, data flow", BULLET))
-    out.append(P("&bull; Run guide — install &rarr; train &rarr; infer &rarr; web app", BULLET))
+    out.append(P("&bull; Run guide — install &rarr; train &rarr; infer &rarr; web app &rarr; Telegram bot", BULLET))
     out.append(P("&bull; Result analysis — metrics, OCR samples, conclusion", BULLET))
     out.append(Spacer(1, 1.5 * cm))
     out.append(P(
@@ -141,7 +141,8 @@ def section_code_analysis():
 │   ├── train.py       # YOLO training & validation, GPU/MPS/CPU autodetect
 │   ├── inference.py   # YOLO prediction + bbox crop saving
 │   ├── ocr.py         # preprocess + PaddleOCR + pix2tex + JSON writer
-│   ├── webapp.py      # Flask web app: upload -> result + JSON download
+│   ├── webapp.py      # Flask web app: upload -> searchable PDF + JSON
+│   ├── tgbot.py       # Telegram bot: chat upload queue -> /run -> PDF + JSON
 │   └── cli.py         # argparse: download/extract/convert/train/val/infer/...
 ├── docbank_local_setup.ipynb   # thin notebook calling the package
 ├── requirements.txt
@@ -158,9 +159,11 @@ def section_code_analysis():
         v
    train_yolo()                    # Ultralytics YOLOv8n, 20 epochs, CPU
         v
-        +-------------- best.pt ---------------+
+        +------ layout checkpoint / best.pt ----+
                                                 |
                           [ User uploads page / PDF ]
+                                      |         |
+                              webapp.py     tgbot.py
                                                 |
                             run_yolo_inference()
                                                 |
@@ -172,7 +175,7 @@ def section_code_analysis():
               |              |                |               |
               +-----> save_results_json() <----+
                               |
-                       results.json + crops/ + boxed pages"""))
+                       results.json + searchable PDF + crops/ + boxed pages"""))
 
     out.append(P("1.5 Module-by-module summary", H2))
     out.append(kv_table([
@@ -180,8 +183,8 @@ def section_code_analysis():
         ["config.py",
          "Single source of truth for paths and knobs. Reads env vars "
          "(DATA_ROOT, MAX_PAGES, NUM_WORKERS, TRAIN_VAL_SPLIT, "
-         "DATASET_PARTS) so the same code runs unchanged on Mac / Linux / "
-         "Windows / Colab."],
+         "DATASET_PARTS, LAYOUT_WEIGHTS, TELEGRAM_BOT_TOKEN) so the same "
+         "code runs unchanged on Mac / Linux / Windows / Colab / Docker."],
         ["download.py",
          "Pulls the small annotation zip + N of 10 image-archive parts via "
          "huggingface_hub.hf_hub_download (auto-resume). Extraction prefers "
@@ -197,14 +200,15 @@ def section_code_analysis():
          "Wraps Ultralytics YOLO. Sensible doc-friendly defaults: no flips, "
          "low scale jitter, mosaic 0.5. Auto-detects CUDA / MPS / CPU."],
         ["inference.py",
-         "Loads the most recent best.pt automatically, runs the model in "
-         "stream mode (memory-bounded) and writes per-class crop JPGs."],
+         "Prefers cfg.layout_weights (DocLayout-YOLO checkpoint) and falls "
+         "back to the most recent best.pt. Runs the model in stream mode "
+         "(memory-bounded) and writes per-class crop JPGs."],
         ["ocr.py",
          "Lazy-loads PaddleOCR and pix2tex. Compatible with both PaddleOCR v2 "
          "and v3. Disables Paddle 3.x oneDNN / new IR via FLAGS_* env vars set "
          "at import time. The fast <code>_enrich()</code> path applies <i>filter "
          "+ parallel + upscale + Paddle rec-only + pix2tex max_seq_len/greedy "
-         "+ incremental cache</i>; both CLI and web app call into it."],
+         "+ incremental cache</i>; CLI, web app and Telegram bot call into it."],
         ["__init__.py",
          "Sets <code>OMP_NUM_THREADS</code> / <code>MKL_NUM_THREADS</code> to "
          "<code>cpu_count() / 2</code> before any ML library is imported. Without "
@@ -212,9 +216,14 @@ def section_code_analysis():
          "the &quot;parallel&quot; threads."],
         ["webapp.py",
          "Flask app. Drag-and-drop upload of JPG/PNG/PDF, server-side YOLO+OCR, "
-         "live MathJax rendering, downloadable results.json. PDFs are exploded "
-         "via PyMuPDF (no poppler binary needed). Picks up waitress for true "
-         "concurrent uploads when installed."],
+         "searchable PDF output, stored results.json, and job artefacts. PDFs "
+         "are exploded via PyMuPDF (no poppler binary needed). Picks up "
+         "waitress for true concurrent uploads when installed."],
+        ["tgbot.py",
+         "Stage 7 Telegram bot. Users send images/PDFs in chat, optionally "
+         "tune the same OCR/detection settings via /set, then run /run. It "
+         "reuses webapp._process_uploads and returns the same searchable PDF "
+         "plus results.json."],
         ["cli.py",
          "argparse front-end exposing every stage as a subcommand: download, "
          "extract, convert, train, val, infer, serve, smoketest, info."],
@@ -234,7 +243,9 @@ def section_code_analysis():
         ["max_pages", "MAX_PAGES", "(none)", "Cap pages per split during conversion / inference."],
         ["num_workers", "NUM_WORKERS", "4", "YOLO data-loader workers."],
         ["train_val_split", "TRAIN_VAL_SPLIT", "0.9", "Used only when re-splitting."],
+        ["layout_weights", "LAYOUT_WEIGHTS", "(none)", "DocLayout-YOLO checkpoint for web, bot and general inference."],
         ["hf_token", "HF_TOKEN", "(none)", "HuggingFace auth — bigger rate limits."],
+        ["telegram_bot_token", "TELEGRAM_BOT_TOKEN", "(none)", "BotFather token for Stage 7 Telegram bot; masked in info output."],
     ], col_widths=[3.6 * cm, 3.6 * cm, 2.6 * cm, 6 * cm]))
 
     out.append(P("1.7 Resumable design (no work is repeated)", H2))
@@ -251,7 +262,7 @@ def section_code_analysis():
 │   └── .convert.done        ← skips re-converting annotations
 ├── outputs/
 │   ├── ocr_cache.json       ← per-crop OCR result cache (CLI)
-│   └── web_ocr_cache.json   ← per-crop OCR result cache (web app)"""))
+│   └── web_ocr_cache.json   ← per-crop OCR result cache (web app + Telegram)"""))
     out.append(P(
         "Force a redo by deleting the marker (<code>rm DocBank/raw/.extract.done</code>) "
         "or passing <code>--force</code> where supported. The OCR caches "
@@ -259,8 +270,8 @@ def section_code_analysis():
         "stable across runs and across users.", BODY))
 
     out.append(P("1.8 Output JSON schema", H2))
-    out.append(P("Both the CLI <code>infer</code> command and the web app's "
-                 "Download JSON button produce the same shape:", BODY))
+    out.append(P("The CLI <code>infer</code> command, the web app, and the "
+                 "Telegram bot produce the same core page/detection shape:", BODY))
     out.append(code_block("""{
   "pages": [
     {
@@ -381,44 +392,56 @@ python -m docbank_pipeline infer \\
     ├── results.json              # CLI infer result
     ├── crops/{text,formula,image}/   # CLI crops
     ├── ocr_cache.json            # CLI OCR cache
-    └── web/                      # web app jobs
-        ├── web_ocr_cache.json    # web OCR cache (shared)
-        └── <job_id>/
+    ├── web_ocr_cache.json        # shared OCR cache for web + Telegram
+    ├── web/                      # web app jobs
+    │   └── <job_id>/
+    │       ├── inputs/
+    │       ├── boxes/
+    │       ├── crops/
+    │       ├── results.json
+    │       └── result.pdf
+    └── telegram/                 # Telegram bot jobs
+        └── <chat_id>/<job_id>/
             ├── inputs/
             ├── boxes/
             ├── crops/
-            └── results.json"""))
+            ├── results.json
+            └── result.pdf"""))
 
     out.append(P("2.5 Web app (the main demo)", H2))
     out.append(P(
         "The web app exposes the trained pipeline as an interactive site. "
         "Users drag-and-drop images or PDFs, the server runs YOLO + "
-        "PaddleOCR + pix2tex on each page, and the result page shows the "
-        "boxed images, the per-detection crops, and the recognised text — "
-        "with formulas rendered as real math via MathJax. A "
-        "<b>Download JSON</b> button gives the structured output.", BODY))
+        "PaddleOCR + formula recognition on each page, stores the job "
+        "artefacts, and returns a searchable reconstructed PDF. The structured "
+        "JSON remains available under the per-job folder/routes.", BODY))
 
     out.append(P("Architecture", H3))
     out.append(P(
         "The web app is just an HTTP front-end on top of the same Python "
         "package the CLI uses. It does NOT retrain or call the original "
-        "DocBank dataset — it loads the trained <code>best.pt</code> off "
-        "disk and runs identical inference + OCR code.",
+        "DocBank dataset — it loads <code>cfg.layout_weights</code> "
+        "(normally <code>doclayout_yolo_docstructbench_imgsz1024.pt</code>) "
+        "or falls back to <code>best.pt</code>, then runs identical inference "
+        "+ OCR code.",
         BODY))
-    out.append(code_block("""        [ The trained model — produced once by the training stage ]
-        DocBank/runs/yolov8_docbank/weights/best.pt
+    out.append(code_block("""        [ DocLayout checkpoint / trained model ]
+        doclayout_yolo_docstructbench_imgsz1024.pt
                                 |
-              +-----------------+------------------+
-              |                                    |
-       CLI: infer command                  Web app: webapp.py
-              |                                    |
-       run_yolo_inference()  <-----  shared  -----  run_yolo_inference()
-       _enrich() OCR pass    <-----  shared  -----  _enrich() OCR pass
-              |                                    |
-        outputs/results.json                outputs/web/<job>/results.json"""))
+       +------------------------+------------------------+
+       |                        |                        |
+CLI: infer command       Web app: webapp.py      Telegram: tgbot.py
+       |                        |                        |
+run_yolo_inference()  <-- shared detection code --> run_yolo_inference()
+_enrich() OCR pass    <-- shared OCR/cache code --> _enrich() OCR pass
+       |                        |                        |
+outputs/results.json   outputs/web/<job>/...     outputs/telegram/<chat>/<job>/..."""))
 
     out.append(P("Starting the server", H3))
-    out.append(code_block("""# Local only — http://127.0.0.1:5000
+    out.append(code_block("""# Point every interface at the DocLayout checkpoint.
+export LAYOUT_WEIGHTS=$PWD/doclayout_yolo_docstructbench_imgsz1024.pt
+
+# Local only — http://127.0.0.1:5000
 python -m docbank_pipeline serve
 
 # LAN-shared (classmates open http://<your-IP>:5000)
@@ -456,13 +479,14 @@ python -m docbank_pipeline serve --host 0.0.0.0
         "<code>MAX_CONTENT_LENGTH</code>.", BODY))
 
     out.append(P("Per-job folder layout", H3))
-    out.append(code_block("""DocBank/outputs/web/
-├── web_ocr_cache.json          # shared OCR cache across all uploads
-└── <job_id>/                   # 12-char hex per upload (no collisions)
+    out.append(code_block("""DocBank/outputs/
+├── web_ocr_cache.json          # shared OCR cache across web + Telegram uploads
+└── web/<job_id>/               # 12-char hex per web upload
     ├── inputs/                 # the user's original files (incl. .pdf)
     ├── boxes/                  # source page + drawn detection rectangles
     ├── crops/<class>/          # one JPG per detection
-    └── results.json            # exactly what Download JSON sends"""))
+    ├── results.json
+    └── result.pdf"""))
 
     out.append(P("Concurrency", H3))
     out.append(P(
@@ -478,23 +502,68 @@ python -m docbank_pipeline serve --host 0.0.0.0
     out.append(P("2. Tweak the form fields if needed; defaults are sensible.", BULLET))
     out.append(P("3. Click <b>Extract</b>. First request loads the OCR models "
                  "(~30 s); later uploads are fast.", BULLET))
-    out.append(P("4. Inspect inline results, then click <b>Download JSON</b> "
-                 "or <b>New upload</b>.", BULLET))
+    out.append(P("4. Download/open the returned searchable PDF; inspect "
+                 "<code>results.json</code> from the job folder when you need "
+                 "the structured detections.", BULLET))
 
-    out.append(P("2.6 Pipeline validation report", H2))
+    out.append(P("2.6 Telegram bot (Stage 7)", H2))
     out.append(P(
-        "<code>make_html_report.py</code> at the project root runs ten "
+        "The Telegram bot is a chat front-end over the same job pipeline as "
+        "the web app. Telegram sends files one message at a time, so "
+        "<code>tgbot.py</code> keeps a small per-chat upload queue: users send "
+        "one or more images/PDFs, optionally change settings with "
+        "<code>/set</code>, then launch the batch with <code>/run</code>.",
+        BODY))
+    out.append(code_block("""# One-time dependency is in requirements.txt / requirements-deploy.txt:
+# python-telegram-bot>=20
+
+export TELEGRAM_BOT_TOKEN=123456:abcdef...   # from BotFather
+export LAYOUT_WEIGHTS=$PWD/doclayout_yolo_docstructbench_imgsz1024.pt
+python -m docbank_pipeline.tgbot
+
+# In Telegram:
+#   /start
+#   send one or more JPG/PNG/TIFF/PDF files
+#   /settings
+#   /set max_formulas 30
+#   /run"""))
+    out.append(P(
+        "Per-chat artefacts live under "
+        "<code>DocBank/outputs/telegram/&lt;chat_id&gt;/&lt;job_id&gt;/</code>. "
+        "Each job contains <code>inputs/</code>, <code>boxes/</code>, "
+        "<code>crops/</code>, <code>results.json</code>, and "
+        "<code>result.pdf</code>. The bot sends the PDF and JSON back to the "
+        "chat after processing.", BODY))
+    out.append(kv_table([
+        ["Command", "Purpose"],
+        ["/start", "Explain the bot workflow."],
+        ["/settings", "Show current detection/OCR/cache settings."],
+        ["/set key value", "Change a knob, e.g. /set conf 0.30 or /set formula_ocr off."],
+        ["/status", "Show queued files/pages for the current chat."],
+        ["/new or /cancel", "Clear the queued batch before processing."],
+        ["/run", "Run YOLO + OCR and return searchable PDF + results.json."],
+    ], col_widths=[4 * cm, 11.6 * cm]))
+    out.append(P(
+        "The token lives in <code>PipelineConfig.telegram_bot_token</code>, "
+        "loaded from <code>TELEGRAM_BOT_TOKEN</code>, exactly like "
+        "<code>HF_TOKEN</code> and <code>LAYOUT_WEIGHTS</code>. "
+        "<code>python -m docbank_pipeline info</code> reports whether it is "
+        "set but never prints the secret value.", SMALL))
+
+    out.append(P("2.7 Pipeline validation report", H2))
+    out.append(P(
+        "<code>make_html_report.py</code> at the project root runs eleven "
         "automatic verification checks against the on-disk artefacts and "
         "writes <code>Pipeline_Validation_Report.html</code> — a one-page "
         "audit you can open in any browser. Every check is backed by the "
         "real file content (model size, training csv, JSON schema, OCR "
-        "success rates, registered Flask routes), so a green report is "
+        "success rates, registered Flask routes, Telegram bot wiring), so a green report is "
         "concrete evidence that everything works.", BODY))
     out.append(code_block("""python make_html_report.py
 start Pipeline_Validation_Report.html"""))
     out.append(P("Re-run any time after a change to refresh the audit.", SMALL))
 
-    out.append(P("2.4 CLI cheatsheet", H2))
+    out.append(P("2.8 CLI cheatsheet", H2))
     out.append(kv_table([
         ["Subcommand", "Purpose"],
         ["info", "Print resolved configuration."],
@@ -506,6 +575,7 @@ start Pipeline_Validation_Report.html"""))
         ["infer", "Run YOLO + OCR + LaTeX-OCR on a folder."],
         ["serve", "Start the upload-and-extract Flask web app."],
         ["smoketest", "End-to-end run on 5-20 pages for sanity check."],
+        ["docbank_pipeline.tgbot", "Standalone module that starts the Stage 7 Telegram bot."],
     ]))
 
     return out
@@ -523,7 +593,7 @@ def section_results():
     out.append(kv_table([
         ["Artefact", "What it is", "Size"],
         ["DocBank/runs/yolov8_docbank/weights/best.pt",
-         "Trained YOLOv8n model (the one CLI &amp; web app both load).",
+         "Trained YOLOv8n model (fallback detector; production web/bot use the DocLayout checkpoint via LAYOUT_WEIGHTS).",
          "6.2 MB"],
         ["DocBank/yolo_dataset/",
          "COCO &rarr; YOLO converted dataset with data.yaml.",
@@ -668,6 +738,7 @@ quantities axpaZxpay. Using a vector valued function f we...'"""))
         ["Subset / debug mode",                     "<b>Yes</b> — --max-pages, smoketest"],
         ["GPU detect with CPU fallback",            "<b>Yes</b> — utils.detect_device()"],
         ["Web frontend (bonus)",                    "<b>Yes</b> — Flask app with PDF upload"],
+        ["Telegram bot (Stage 7)",                  "<b>Yes</b> — chat uploads, /set controls, /run -> PDF + JSON"],
     ], col_widths=[8.5 * cm, 7.1 * cm]))
 
     out.append(P("3.8 Performance journey: 5 h &rarr; ~45 min", H2))
@@ -785,7 +856,7 @@ quantities axpaZxpay. Using a vector valued function f we...'"""))
         "python -m docbank_pipeline serve --host 0.0.0.0\n"
         "# Now 8 worker threads handle classmates uploading simultaneously."))
 
-    out.append(P("3.9 Relationship: training, CLI, web app", H2))
+    out.append(P("3.9 Relationship: training, CLI, web app, Telegram bot", H2))
     out.append(P(
         "A common question: <i>does the web app share anything with the "
         "1000-page training run?</i> Yes — the trained model and the OCR code. "
@@ -794,21 +865,23 @@ quantities axpaZxpay. Using a vector valued function f we...'"""))
         BODY))
     out.append(kv_table([
         ["Asset", "Where it lives", "Used by"],
-        ["best.pt (trained model)", "DocBank/runs/yolov8_docbank/weights/", "<b>Both</b> CLI and web app"],
+        ["DocLayout checkpoint / best.pt", "Project root or DocBank/runs/.../weights/", "<b>CLI, web app and Telegram bot</b>"],
         ["data.yaml + YOLO dataset", "DocBank/yolo_dataset/", "Training only"],
         ["DocBank raw zip parts",   "DocBank/raw/",                         "Training only"],
-        ["Detection + OCR code",    "docbank_pipeline/{inference,ocr}.py",  "<b>Both</b> CLI and web app"],
+        ["Detection + OCR code",    "docbank_pipeline/{inference,ocr}.py",  "<b>All three interfaces</b>"],
+        ["Shared upload processor", "docbank_pipeline/webapp.py::_process_uploads", "<b>Web app and Telegram bot</b>"],
         ["CLI batch results",       "DocBank/outputs/results*.json",        "CLI"],
         ["CLI crops",               "DocBank/outputs/crops/",               "CLI"],
         ["CLI OCR cache",           "DocBank/outputs/ocr_cache.json",       "CLI"],
         ["Per-upload artefacts",    "DocBank/outputs/web/&lt;job&gt;/",     "Web app"],
-        ["Web OCR cache",           "DocBank/outputs/web_ocr_cache.json",   "Web app (shared across uploads)"],
+        ["Per-chat artefacts",      "DocBank/outputs/telegram/&lt;chat&gt;/&lt;job&gt;/", "Telegram bot"],
+        ["Shared upload OCR cache", "DocBank/outputs/web_ocr_cache.json",   "Web app and Telegram bot"],
     ], col_widths=[5 * cm, 6 * cm, 4.6 * cm]))
     out.append(P(
         "Analogy: training builds the <i>factory</i> (best.pt). The CLI uses "
-        "the factory to mass-produce pre-known outputs. The web app uses the "
-        "same factory to process whatever a visitor brings in. Same machinery, "
-        "different intake doors.", QUOTE))
+        "the factory to mass-produce pre-known outputs. The web app and "
+        "Telegram bot use the same factory to process whatever a visitor "
+        "brings in. Same machinery, different intake doors.", QUOTE))
 
     out.append(P("3.10 Troubleshooting log (issues we hit, and the fix)", H2))
     out.append(kv_table([
@@ -873,10 +946,13 @@ quantities axpaZxpay. Using a vector valued function f we...'"""))
     out.append(P("&bull; Open this PDF on the projector — start with section 3.7 "
                  "(checklist of goals) so the audience knows what's been built.", BULLET))
     out.append(P("&bull; Open <code>Pipeline_Validation_Report.html</code> — "
-                 "ten green PASS badges back the claim that everything works.", BULLET))
+                 "eleven checks back the claim that everything works.", BULLET))
     out.append(P("&bull; Switch to the live web app (<code>python -m docbank_pipeline "
                  "serve</code>). Drop a PDF in. Show the in-place rendering of "
                  "math + Download JSON.", BULLET))
+    out.append(P("&bull; Switch to Telegram. Send the same PDF to the bot, run "
+                 "<code>/run</code>, and show that it returns the same searchable "
+                 "PDF + JSON workflow from chat.", BULLET))
     out.append(P("&bull; Re-upload the same file. The OCR cache makes the second run "
                  "finish in seconds — concrete proof the cache works.", BULLET))
     out.append(P("&bull; Optionally let a classmate open the same URL on their phone "
@@ -886,8 +962,8 @@ quantities axpaZxpay. Using a vector valued function f we...'"""))
     out.append(P(
         "Every requirement of the original brief was met. The pipeline is "
         "stable, resumable and runnable end-to-end on a regular Windows "
-        "laptop, and the trained model is exposed through both a CLI "
-        "<i>and</i> a web app that accepts arbitrary PDFs.", BODY))
+        "laptop, and the trained model is exposed through a CLI, a web app, "
+        "and a Telegram bot that accepts arbitrary PDFs.", BODY))
     out.append(P(
         "After three rounds of optimisation — parallel OCR + filter + cache, "
         "pix2tex decoding tuning, and CPU-core pinning + Paddle rec-only — "
@@ -897,9 +973,10 @@ quantities axpaZxpay. Using a vector valued function f we...'"""))
         "finish in seconds via the OCR cache, and the cache is now flushed "
         "every 25 detections so a Ctrl+C never wastes hours of work.", BODY))
     out.append(P(
-        "Both interfaces share the exact same trained model and the exact "
-        "same OCR code path, so what classmates see in the web app is the "
-        "same quality as the batch run on DocBank's val set.", BODY))
+        "All user-facing interfaces share the exact same trained model and "
+        "the exact same OCR code path, so what classmates see in the web app "
+        "or Telegram bot is the same quality as the batch run on DocBank's "
+        "val set.", BODY))
     return out
 
 

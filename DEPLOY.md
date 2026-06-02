@@ -3,10 +3,10 @@
 The app is a Flask service (`python -m docbank_pipeline serve`) packaged as a
 **single portable Docker image** (`Dockerfile`). It runs the full pipeline:
 
-- **YOLOv8** layout detection (weights `best.pt` are baked into the image)
+- **DocLayout-YOLO** layout detection (`doclayout_yolo_docstructbench_imgsz1024.pt` is baked into the image)
 - **PaddleOCR** text recognition
-- **pix2tex** formula → LaTeX
-- **pdflatex** (TeX Live) → reconstructed PDF
+- **PP-FormulaNet / pix2tex fallback** formula → LaTeX
+- **reportlab** → searchable reconstructed PDF (original page image + invisible text layer)
 
 ### Resource reality check
 The full stack needs **~3–4 GB RAM**. The first upload downloads OCR model
@@ -47,8 +47,8 @@ fast (singletons are cached in-process). Anything with <2 GB RAM will OOM.
    (Use an HF access token with *write* scope when prompted for a password.)
 4. HF builds the Dockerfile and serves on port `7860`. Done.
 
-> `best.pt` (6 MB) is committed, so the Space has the detection model with no
-> extra setup.
+> `doclayout_yolo_docstructbench_imgsz1024.pt` (about 39 MB) is committed, so
+> the Space has the detector checkpoint with no extra setup.
 
 ---
 
@@ -82,11 +82,38 @@ The `Dockerfile` is used as-is. Set the internal port to `7860` in `fly.toml`.
 
 | Var | Default (in image) | Purpose |
 |-----|--------------------|---------|
+| `APP_MODE` | `web` | `web` starts Flask; `telegram`, `tgbot`, or `bot` starts the Telegram bot. |
 | `PORT` | `7860` | Port to bind (Render injects its own). |
-| `WEIGHTS` | `/app/best.pt` | Trained YOLO detection weights. |
-| `YOLO_IMGSZ` | `960` | Inference image size. Matches the model's training resolution (`args.yaml`); 640 hurts small-text recall. |
+| `LAYOUT_WEIGHTS` | `/app/doclayout_yolo_docstructbench_imgsz1024.pt` | DocLayout-YOLO checkpoint used by `cfg.layout_weights`. |
 | `DATA_ROOT` | `/tmp/docbank` | Writable dir for per-job artefacts + caches. |
 | `HF_TOKEN` | _(unset)_ | Only needed for dataset/training, not inference. |
+| `TELEGRAM_BOT_TOKEN` | _(unset)_ | BotFather token for `python -m docbank_pipeline.tgbot`. Set as a deployment secret if you run the bot process. |
+
+## Telegram bot in Docker / Hugging Face
+
+The checked-in Dockerfile defaults to the Flask web app:
+
+```bash
+APP_MODE=web
+# internally runs:
+# python -m docbank_pipeline serve --host 0.0.0.0 --port ${PORT:-7860}
+```
+
+That is the right command for Hugging Face Spaces and Render web services. The
+Telegram bot is a separate long-polling process, but the same image can start
+it by changing `APP_MODE`:
+
+```bash
+APP_MODE=telegram
+TELEGRAM_BOT_TOKEN=123456:abcdef...
+# internally runs:
+# python -m docbank_pipeline.tgbot
+```
+
+For production, prefer a separate worker/container for the bot rather than
+trying to run both Flask and long polling in one process. Hugging Face Spaces
+can sleep when idle, so it is a good demo host for the web app but not an ideal
+always-on Telegram bot host.
 
 ## Local Docker test
 
@@ -94,4 +121,10 @@ The `Dockerfile` is used as-is. Set the internal port to `7860` in `fly.toml`.
 docker build -t docbank .
 docker run --rm -p 7860:7860 docbank
 # open http://localhost:7860
+
+# Run the Telegram bot from the same image:
+docker run --rm \
+  -e APP_MODE=telegram \
+  -e TELEGRAM_BOT_TOKEN=123456:abcdef... \
+  docbank
 ```

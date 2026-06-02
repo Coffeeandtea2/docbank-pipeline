@@ -1,6 +1,6 @@
 # Render Blueprint. In the Render dashboard: New + > Blueprint > pick this repo.
 #
-# NOTE: the full ML stack (torch + paddlepaddle + pix2tex + TeX Live) needs
+# NOTE: the full ML stack (torch + paddlepaddle + formula OCR) needs
 # ~3-4 GB RAM. It will OOM on Free/Starter. `pro` = 4 GB. If you hit limits
 # or cost concerns, Hugging Face Spaces (Docker) gives 16 GB RAM free — see
 # DEPLOY.md.
@@ -13,12 +13,10 @@ services:
     healthCheckPath: /
     autoDeploy: true
     envVars:
-      - key: WEIGHTS
-        value: /app/best.pt
+      - key: LAYOUT_WEIGHTS
+        value: /app/doclayout_yolo_docstructbench_imgsz1024.pt
       - key: DATA_ROOT
         value: /tmp/docbank
-      - key: YOLO_IMGSZ
-        value: "960"            # match the detector's training resolution
       - key: OCR_LANG
         value: "korean"        # PaddleOCR recognition language
       # Render injects PORT automatically; the app reads it. No need to set it.

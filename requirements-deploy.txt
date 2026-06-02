@@ -15,6 +15,8 @@ matplotlib
 flask>=3.0
 waitress>=3.0
 pymupdf>=1.24
+# Telegram bot
+python-telegram-bot>=20
 
 # OCR / formula recognition
 paddleocr>=2.7

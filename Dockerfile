@@ -9,24 +9,27 @@ FROM python:3.10-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    # Where the app writes per-job artefacts + caches (must be writable).
-    DATA_ROOT=/tmp/docbank \
-    # DocLayout-YOLO detector checkpoint (read via cfg.layout_weights).
-    LAYOUT_WEIGHTS=/app/doclayout_yolo_docstructbench_imgsz1024.pt \
-    # PaddleOCR recognition language (Korean docs with Hanja). Override as needed.
-    OCR_LANG=korean \
-    # Keep every model/cache download under writable /tmp (HF Spaces runs as
-    # a non-root user; /app is read-only at runtime there).
-    HF_HOME=/tmp/cache/hf \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Where the app writes per-job artefacts + caches (must be writable).
+ENV DATA_ROOT=/tmp/docbank
+# DocLayout-YOLO detector checkpoint (read via cfg.layout_weights).
+ENV LAYOUT_WEIGHTS=/app/doclayout_yolo_docstructbench_imgsz1024.pt
+# PaddleOCR recognition language (Korean docs with Hanja). Override as needed.
+ENV OCR_LANG=korean
+# Keep every model/cache download under writable /tmp (HF Spaces runs as
+# a non-root user; /app is read-only at runtime there).
+ENV HF_HOME=/tmp/cache/hf \
     XDG_CACHE_HOME=/tmp/cache \
-    MPLCONFIGDIR=/tmp/cache/mpl \
-    # HF Spaces runs as a non-root user; give PaddleOCR (~/.paddleocr) and
-    # Ultralytics a writable HOME so their downloads don't fail at runtime.
-    HOME=/tmp/home \
-    YOLO_CONFIG_DIR=/tmp/Ultralytics \
-    # Default port; platforms that inject $PORT (Render) override at runtime.
-    PORT=7860
+    MPLCONFIGDIR=/tmp/cache/mpl
+# HF Spaces runs as a non-root user; give PaddleOCR (~/.paddleocr) and
+# Ultralytics a writable HOME so their downloads don't fail at runtime.
+ENV HOME=/tmp/home \
+    YOLO_CONFIG_DIR=/tmp/Ultralytics
+# Default port; platforms that inject $PORT (Render) override at runtime.
+ENV PORT=7860
+# web = Flask upload app, telegram/tgbot = Telegram long-polling bot.
+ENV APP_MODE=web
 
 # ---- system deps: runtime libs for opencv / paddle (no TeX Live anymore) ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -54,5 +57,6 @@ RUN mkdir -p /tmp/docbank /tmp/cache/hf /tmp/cache/mpl /tmp/home /tmp/Ultralytic
 
 EXPOSE 7860
 
-# Bind to 0.0.0.0 and the platform-provided $PORT. serve() uses waitress.
-CMD ["sh", "-c", "python -m docbank_pipeline serve --host 0.0.0.0 --port ${PORT:-7860}"]
+# APP_MODE=web binds to 0.0.0.0 and the platform-provided $PORT.
+# APP_MODE=telegram runs the long-polling bot from the same image.
+CMD ["sh", "-c", "case \"${APP_MODE:-web}\" in telegram|tgbot|bot) python -m docbank_pipeline.tgbot ;; *) python -m docbank_pipeline serve --host 0.0.0.0 --port ${PORT:-7860} ;; esac"]

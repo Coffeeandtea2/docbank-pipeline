@@ -20,6 +20,8 @@ flask>=3.0
 waitress>=3.0
 # PDF upload support (pure-Python, no poppler binary required)
 pymupdf>=1.24
+# Telegram bot (for `python -m docbank_pipeline.tgbot`)
+python-telegram-bot>=20
 
 # OCR / formula recognition (optional but recommended)
 paddleocr>=2.7

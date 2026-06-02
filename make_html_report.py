@@ -19,6 +19,8 @@ Each check answers ONE question from the original brief:
   Q9. Is the result cache active?                  -> cache_active
   Q10. Does the web app import + register
        all routes?                                 -> webapp_imports
+  Q11. Is the Telegram bot wired into config,
+       dependencies and handlers?                  -> tgbot_wired
 
 Run:    python make_html_report.py
 Output: ./Pipeline_Validation_Report.html  (open in any browser)
@@ -29,7 +31,9 @@ from __future__ import annotations
 import csv
 import html
 import importlib
+import ast
 import json
+import os
 import sys
 import time
 from datetime import datetime
@@ -416,6 +420,73 @@ def check_webapp_imports() -> Check:
     return c
 
 
+def check_tgbot_wired() -> Check:
+    c = Check("Q11", "Is the Stage 7 Telegram bot wired correctly?")
+    config_path = ROOT / "docbank_pipeline" / "config.py"
+    tgbot_path = ROOT / "docbank_pipeline" / "tgbot.py"
+    if not config_path.is_file() or not tgbot_path.is_file():
+        c.failed("config.py or tgbot.py is missing.")
+        return c
+
+    try:
+        config_src = config_path.read_text(encoding="utf-8")
+        tgbot_src = tgbot_path.read_text(encoding="utf-8")
+        config_tree = ast.parse(config_src)
+        tgbot_tree = ast.parse(tgbot_src)
+    except Exception as e:
+        c.failed(f"Could not parse Telegram bot source files: {e}")
+        return c
+
+    if "telegram_bot_token" not in config_src or "TELEGRAM_BOT_TOKEN" not in config_src:
+        c.failed("PipelineConfig does not expose TELEGRAM_BOT_TOKEN.")
+        return c
+    if "cfg.telegram_bot_token" not in tgbot_src:
+        c.failed("tgbot.py does not read the token from PipelineConfig.")
+        return c
+
+    required_handlers = [
+        "create_application", "run_bot", "handle_upload", "run_command",
+        "settings_command", "set_command", "new_command", "status_command",
+    ]
+    defined_functions = {
+        node.name for node in ast.walk(tgbot_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    missing_handlers = [h for h in required_handlers if h not in defined_functions]
+    if missing_handlers:
+        c.failed(f"tgbot.py missing handlers/functions: {missing_handlers}")
+        return c
+
+    req_files = [ROOT / "requirements.txt", ROOT / "requirements-deploy.txt"]
+    missing_dep_files = [
+        p.name for p in req_files
+        if "python-telegram-bot" not in p.read_text(encoding="utf-8")
+    ]
+    if missing_dep_files:
+        c.failed(
+            "python-telegram-bot is not listed in every requirements file.",
+            [f"Missing from: {', '.join(missing_dep_files)}"],
+        )
+        return c
+
+    evidence = [
+        "tgbot.py source parses successfully.",
+        "PipelineConfig.telegram_bot_token is backed by TELEGRAM_BOT_TOKEN.",
+        "python-telegram-bot is listed in requirements.txt and requirements-deploy.txt.",
+        "Expected commands: /start, /help, /settings, /set, /status, /new, /cancel, /run.",
+        "Job output root: DocBank/outputs/telegram/<chat_id>/<job_id>/",
+    ]
+    if os.environ.get("TELEGRAM_BOT_TOKEN"):
+        c.passed("Telegram bot module, config token, and dependencies are wired.", evidence)
+    else:
+        c.warned(
+            "Telegram bot wiring is present, but TELEGRAM_BOT_TOKEN is not set "
+            "in this report process.",
+            evidence + ["Set TELEGRAM_BOT_TOKEN before running the bot."],
+        )
+    return c
+
+
 # ---------------------------------------------------------------- HTML out
 
 CSS = """
@@ -489,7 +560,7 @@ def render(checks: list[Check]) -> str:
         f"<style>{CSS}</style></head><body>",
         "<h1>DocBank Pipeline — Validation Report</h1>",
         f"<p class='lead'>Generated {html.escape(when)} &middot; "
-        f"answers 10 verification questions about the project's actual "
+        f"answers 11 verification questions about the project's actual "
         f"on-disk artefacts.</p>",
         "<div class='summary'>",
         f"<div><b style='color:{overall_color};'>{overall}</b><br>"
@@ -538,6 +609,7 @@ def main():
         check_json_schema(),
         check_cache_active(),
         check_webapp_imports(),
+        check_tgbot_wired(),
     ]
 
     out = ROOT / "Pipeline_Validation_Report.html"

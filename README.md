@@ -71,7 +71,9 @@ overridden via env vars or CLI flags:
 | `DATASET_PARTS`  | `1`                      | How many of the 10 image parts to download (1–10) |
 | `NUM_WORKERS`    | `4`                      | Worker threads for YOLO          |
 | `TRAIN_VAL_SPLIT`| `0.9`                    | Used only if you re-split        |
+| `LAYOUT_WEIGHTS` | _(unset)_                | DocLayout-YOLO checkpoint used for inference |
 | `HF_TOKEN`       | _(unset)_                | HuggingFace auth (faster + higher rate limits) |
+| `TELEGRAM_BOT_TOKEN` | _(unset)_            | BotFather token for the Stage 7 Telegram bot |
 
 Folders derived from `DATA_ROOT`:
 
@@ -140,6 +142,27 @@ python -m docbank_pipeline infer \
 ```
 Add `--no-text-ocr` or `--no-formula-ocr` to skip a recognition stage.
 
+### Web app
+```bash
+export LAYOUT_WEIGHTS=/path/to/doclayout_yolo_checkpoint.pt
+python -m docbank_pipeline serve
+```
+
+### Stage 7 — Telegram bot
+Create a bot with BotFather, then put its token in the same env/config flow as
+the rest of the pipeline:
+
+```bash
+export TELEGRAM_BOT_TOKEN=123456:abcdef...
+export LAYOUT_WEIGHTS=/path/to/doclayout_yolo_checkpoint.pt
+python -m docbank_pipeline.tgbot
+```
+
+The bot stores per-chat jobs under
+`<DATA_ROOT>/outputs/telegram/<chat_id>/<job_id>/` and returns both a
+searchable PDF and `results.json`. Use `/settings`, `/set`, `/status`, `/new`,
+and `/run` inside Telegram.
+
 ---
 
 ## What changed and why
@@ -168,10 +191,12 @@ These are the places where you may need to adjust based on your environment:
 2. **HF rate limits.** Without `HF_TOKEN`, large downloads frequently get
    throttled. Set `export HF_TOKEN=hf_xxx` (or pass it via Colab secrets)
    before downloading.
-3. **PaddleOCR + paddlepaddle.** First call downloads ~300 MB of weights.
+3. **Telegram bot token.** `TELEGRAM_BOT_TOKEN` is a secret. Set it as an
+   environment variable or deployment secret; do not commit it into the repo.
+4. **PaddleOCR + paddlepaddle.** First call downloads ~300 MB of weights.
    GPU users should replace `paddlepaddle` with `paddlepaddle-gpu` in
    `requirements.txt`.
-4. **pix2tex.** Requires a recent PyTorch. On Apple Silicon use
+5. **pix2tex.** Requires a recent PyTorch. On Apple Silicon use
    `pip install torch torchvision` (CPU/MPS) before `pip install pix2tex`.
-5. **Windows hardlinks.** `link_or_copy` falls back to `shutil.copy2` if
+6. **Windows hardlinks.** `link_or_copy` falls back to `shutil.copy2` if
    hardlinking fails (e.g. on FAT32 / different drives).
