@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 from .config import PipelineConfig
-from .utils import iter_image_files, setup_logging
+from .utils import setup_logging
 
 
 def _add_common_overrides(p: argparse.ArgumentParser) -> None:
@@ -54,7 +54,7 @@ def _build_cfg(args: argparse.Namespace) -> PipelineConfig:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m docbank_pipeline",
-        description="DocBank → YOLO → OCR pipeline (resumable).",
+        description="DocBank â YOLO â OCR pipeline (resumable).",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     p_in.add_argument("--min-ocr-conf", type=float, default=0.30,
                       help="Skip OCR for detections below this confidence (default 0.30).")
     p_in.add_argument("--min-ocr-area", type=int, default=600,
-                      help="Skip OCR for crops smaller than this many pixels² (default 600).")
+                      help="Skip OCR for crops smaller than this many pixelsÂ² (default 600).")
     p_in.add_argument("--min-formula-area", type=int, default=None,
                       help="Per-class override for formula crops only. "
                            "pix2tex is the bottleneck on CPU; a 2000-3000 "
@@ -144,8 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     p_st.add_argument("--epochs", type=int, default=2)
 
     # info
-    p_info = sub.add_parser("info", help="Print resolved configuration.")
-    _add_common_overrides(p_info)
+    sub.add_parser("info", help="Print resolved configuration.")
 
     args = parser.parse_args(argv)
 
@@ -266,10 +265,7 @@ def _run_smoketest(cfg: PipelineConfig, args: argparse.Namespace) -> int:
         log.info("[4/5] training skipped (--skip-train).")
 
     log.info("[5/5] inference + OCR")
-    val_imgs = iter_image_files(
-        cfg.yolo_dataset_dir / "images" / "val",
-        suffixes={".jpg"},
-    )[:n]
+    val_imgs = list((cfg.yolo_dataset_dir / "images" / "val").glob("*.jpg"))[:n]
     if not val_imgs:
         log.error("No val images found; smoketest cannot finish inference.")
         return 1
@@ -285,3 +281,4 @@ def _run_smoketest(cfg: PipelineConfig, args: argparse.Namespace) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
