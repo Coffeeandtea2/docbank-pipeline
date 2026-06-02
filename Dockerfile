@@ -37,9 +37,10 @@ WORKDIR /app
 
 # ---- python deps ----
 # CPU-only torch first so ultralytics / doclayout-yolo / pix2tex reuse it
-# instead of pulling CUDA wheels.
+# instead of pulling the multi-GB CUDA wheel.
 RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
+# Use the CPU deploy requirements.
 COPY requirements-deploy.txt ./
 RUN pip install -r requirements-deploy.txt
 
@@ -52,4 +53,5 @@ RUN mkdir -p /tmp/docbank /tmp/cache/hf /tmp/cache/mpl /tmp/home /tmp/Ultralytic
 
 EXPOSE 7860
 
+# Bind to 0.0.0.0 and the platform-provided $PORT. serve() uses waitress.
 CMD ["sh", "-c", "python -m docbank_pipeline serve --host 0.0.0.0 --port ${PORT:-7860}"]
