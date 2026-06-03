@@ -19,14 +19,17 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from .config import PipelineConfig
 from .inference import run_yolo_inference
 from .utils import iter_image_files, tqdm
 
 log = logging.getLogger("docbank.ocr")
+
+TEXT_RECOGNITION_CLASSES = frozenset({"text", "image"})
 
 
 # ---------------------------------------------------------------- preprocess
@@ -208,6 +211,60 @@ def _maybe_upscale(image_path: Path | str, min_h: int = 40, factor: float = 2.0)
     return np.array(img)
 
 
+def _extract_paddle_rec_texts(page: Any) -> list[str]:
+    """Extract recognised text from one PaddleOCR v2/v3 result page."""
+    rec_texts = None
+    if isinstance(page, dict):
+        rec_texts = page.get("rec_texts")
+    elif hasattr(page, "get"):
+        try:
+            rec_texts = page.get("rec_texts")
+        except Exception:
+            rec_texts = None
+    elif hasattr(page, "rec_texts"):
+        rec_texts = page.rec_texts
+    if rec_texts:
+        return [text for text in rec_texts if text]
+
+    # v2 with det=False (our fast path) may return one (txt, conf) tuple.
+    if isinstance(page, tuple) and len(page) == 2 and isinstance(page[0], str):
+        return [page[0]] if page[0] else []
+
+    try:
+        iterator = iter(page)
+    except TypeError:
+        return []
+
+    lines: list[str] = []
+    for det in iterator:
+        # v2 with det=False: list of (txt, conf) tuples.
+        if isinstance(det, tuple) and len(det) == 2 and isinstance(det[0], str):
+            if det[0]:
+                lines.append(det[0])
+            continue
+        # v2 with det=True: list of [box, (txt, conf)] records.
+        try:
+            _box, (txt, _conf) = det
+        except (ValueError, TypeError):
+            continue
+        if txt:
+            lines.append(txt)
+    return lines
+
+
+def _parse_paddleocr_text(result: Any) -> str:
+    """Normalise PaddleOCR v2/v3 output shapes into newline-joined text."""
+    if not result:
+        return ""
+
+    lines: list[str] = []
+    for page in result:
+        if page is None:
+            continue
+        lines.extend(_extract_paddle_rec_texts(page))
+    return "\n".join(lines)
+
+
 def recognize_text_with_paddleocr(image_path: Path | str) -> str:
     """Run PaddleOCR on a single line/paragraph crop and return its text.
 
@@ -254,54 +311,7 @@ def recognize_text_with_paddleocr(image_path: Path | str) -> str:
             log.warning("PaddleOCR failed on %s: %s", image_path, e)
             return ""
 
-    if not result:
-        return ""
-
-    lines: list[str] = []
-    for page in result:
-        if page is None:
-            continue
-        # v3: dict-like with 'rec_texts'
-        rec_texts = None
-        if isinstance(page, dict):
-            rec_texts = page.get("rec_texts")
-        elif hasattr(page, "get"):
-            try:
-                rec_texts = page.get("rec_texts")
-            except Exception:
-                rec_texts = None
-        elif hasattr(page, "rec_texts"):
-            rec_texts = page.rec_texts
-        if rec_texts:
-            lines.extend(t for t in rec_texts if t)
-            continue
-        # v2 with det=True: list of [box, (txt, conf)]
-        # v2 with det=False (our fast path): list of (txt, conf) tuples,
-        # OR a single (txt, conf) tuple.
-        if isinstance(page, tuple) and len(page) == 2 \
-                and isinstance(page[0], str):
-            if page[0]:
-                lines.append(page[0])
-            continue
-        try:
-            iterator = iter(page)
-        except TypeError:
-            continue
-        for det in iterator:
-            # det=False shape: (txt, conf)
-            if isinstance(det, tuple) and len(det) == 2 \
-                    and isinstance(det[0], str):
-                if det[0]:
-                    lines.append(det[0])
-                continue
-            # det=True shape: [box, (txt, conf)]
-            try:
-                _box, (txt, _conf) = det
-            except (ValueError, TypeError):
-                continue
-            if txt:
-                lines.append(txt)
-    return "\n".join(lines)
+    return _parse_paddleocr_text(result)
 
 _formula_model = None
 
@@ -555,6 +565,87 @@ def _save_cache(path: Path, cache: dict) -> None:
             pass
 
 
+@dataclass(frozen=True)
+class _RecognitionJob:
+    det: dict
+    crop: str
+    cache_key: str
+
+
+@dataclass
+class _RecognitionPlan:
+    text_jobs: list[_RecognitionJob]
+    formula_jobs: list[_RecognitionJob]
+    cache_hits: int = 0
+    skipped_filter: int = 0
+    capped_text: int = 0
+    capped_formula: int = 0
+
+
+def _bbox_area(det: dict) -> int:
+    bbox = det.get("bbox") or [0, 0, 0, 0]
+    return max(0, int(bbox[2]) - int(bbox[0])) * \
+        max(0, int(bbox[3]) - int(bbox[1]))
+
+
+def _plan_recognition_jobs(
+    detections: Sequence[dict],
+    *,
+    do_text: bool,
+    do_formula: bool,
+    min_ocr_conf: float,
+    min_ocr_area: int,
+    min_formula_area: int | None,
+    use_cache: bool,
+    cache: dict,
+    max_text_crops: int | None,
+    max_formulas: int | None,
+) -> _RecognitionPlan:
+    plan = _RecognitionPlan(text_jobs=[], formula_jobs=[])
+
+    for det in detections:
+        crop = det.get("crop_path")
+        det.setdefault("recognized", "")
+        det.setdefault("recognition_kind", None)
+        if not crop:
+            continue
+        if det.get("confidence", 0.0) < min_ocr_conf:
+            plan.skipped_filter += 1
+            continue
+
+        cls_name = det["class_name"]
+        threshold = (
+            min_formula_area
+            if cls_name == "formula" and min_formula_area is not None
+            else min_ocr_area
+        )
+        if _bbox_area(det) < threshold:
+            plan.skipped_filter += 1
+            continue
+
+        cache_key = _crop_hash(crop) if use_cache else ""
+        if cache_key and cache_key in cache:
+            det["recognized"] = cache[cache_key]
+            det["recognition_kind"] = "cached"
+            plan.cache_hits += 1
+            continue
+
+        job = _RecognitionJob(det=det, crop=str(crop), cache_key=cache_key)
+        if cls_name == "formula" and do_formula:
+            plan.formula_jobs.append(job)
+        elif cls_name in TEXT_RECOGNITION_CLASSES and do_text:
+            plan.text_jobs.append(job)
+
+    if max_text_crops is not None and len(plan.text_jobs) > max_text_crops:
+        plan.capped_text = len(plan.text_jobs) - max_text_crops
+        plan.text_jobs = plan.text_jobs[:max_text_crops]
+    if max_formulas is not None and len(plan.formula_jobs) > max_formulas:
+        plan.capped_formula = len(plan.formula_jobs) - max_formulas
+        plan.formula_jobs = plan.formula_jobs[:max_formulas]
+
+    return plan
+
+
 def _enrich(
     detections: Sequence[dict],
     *,
@@ -582,85 +673,53 @@ def _enrich(
     from concurrent.futures import ThreadPoolExecutor
 
     cache: dict = _load_cache(cache_path) if use_cache and cache_path else {}
-    cache_hits = 0
-
-    # Decide what to actually run on each detection.
-    text_jobs: list[tuple[int, dict, str, str]] = []
-    formula_jobs: list[tuple[int, dict, str, str]] = []
-    skipped_filter = 0
-
-    for idx, det in enumerate(detections):
-        crop = det.get("crop_path")
-        det.setdefault("recognized", "")
-        det.setdefault("recognition_kind", None)
-        if not crop:
-            continue
-        if det.get("confidence", 0.0) < min_ocr_conf:
-            skipped_filter += 1
-            continue
-        bbox = det.get("bbox") or [0, 0, 0, 0]
-        area = max(0, int(bbox[2]) - int(bbox[0])) * \
-               max(0, int(bbox[3]) - int(bbox[1]))
-        cls_name = det["class_name"]
-        # Formula crops can use a stricter threshold because pix2tex on CPU
-        # is the bottleneck — small noisy formula crops produce nothing useful
-        # but still consume ~80 s each.
-        threshold = (
-            min_formula_area
-            if cls_name == "formula" and min_formula_area is not None
-            else min_ocr_area
-        )
-        if area < threshold:
-            skipped_filter += 1
-            continue
-        ckey = _crop_hash(crop) if use_cache else ""
-        if ckey and ckey in cache:
-            det["recognized"] = cache[ckey]
-            det["recognition_kind"] = "cached"
-            cache_hits += 1
-            continue
-
-        if cls_name == "formula" and do_formula:
-            formula_jobs.append((idx, det, str(crop), ckey))
-        elif cls_name in {"text", "image"} and do_text:
-            text_jobs.append((idx, det, str(crop), ckey))
-
-    capped_text = capped_formula = 0
-    if max_text_crops is not None and len(text_jobs) > max_text_crops:
-        capped_text = len(text_jobs) - max_text_crops
-        text_jobs = text_jobs[:max_text_crops]
-    if max_formulas is not None and len(formula_jobs) > max_formulas:
-        capped_formula = len(formula_jobs) - max_formulas
-        formula_jobs = formula_jobs[:max_formulas]
+    plan = _plan_recognition_jobs(
+        detections,
+        do_text=do_text,
+        do_formula=do_formula,
+        min_ocr_conf=min_ocr_conf,
+        min_ocr_area=min_ocr_area,
+        min_formula_area=min_formula_area,
+        use_cache=use_cache,
+        cache=cache,
+        max_text_crops=max_text_crops,
+        max_formulas=max_formulas,
+    )
 
     log.info(
         "Recognition plan: text=%d, formula=%d, cached=%d, filtered_out=%d, "
         "capped(text=%d, formula=%d), total=%d",
-        len(text_jobs), len(formula_jobs), cache_hits, skipped_filter,
-        capped_text, capped_formula, len(detections),
+        len(plan.text_jobs), len(plan.formula_jobs),
+        plan.cache_hits, plan.skipped_filter,
+        plan.capped_text, plan.capped_formula, len(detections),
     )
 
     import threading
     cache_lock = threading.Lock()
     SAVE_EVERY = 25  # persist cache to disk every N items per worker
 
-    def _worker(jobs, recognise_fn, kind, desc):
+    def _worker(
+        jobs: list[_RecognitionJob],
+        recognise_fn: Callable[[str], str],
+        kind: str,
+        desc: str,
+    ) -> None:
         bar = tqdm(
             total=len(jobs), desc=desc, unit="det",
             position=0 if kind == "text" else 1,
         )
         since_save = 0
-        for _idx, det, crop, ckey in jobs:
+        for job in jobs:
             try:
-                recog = recognise_fn(crop)
+                recog = recognise_fn(job.crop)
             except Exception as e:
-                log.debug("%s OCR failed on %s: %s", kind, crop, e)
+                log.debug("%s OCR failed on %s: %s", kind, job.crop, e)
                 recog = ""
-            det["recognized"] = recog or ""
-            det["recognition_kind"] = kind
-            if ckey and recog:
+            job.det["recognized"] = recog or ""
+            job.det["recognition_kind"] = kind
+            if job.cache_key and recog:
                 with cache_lock:
-                    cache[ckey] = recog
+                    cache[job.cache_key] = recog
             since_save += 1
             # Persist the cache periodically. Saves cost is negligible
             # (small JSON), and a Ctrl+C now keeps every result we've
@@ -676,14 +735,14 @@ def _enrich(
     # so neither is blocked on the other.
     with ThreadPoolExecutor(max_workers=2) as pool:
         futs = []
-        if text_jobs:
+        if plan.text_jobs:
             futs.append(pool.submit(
-                _worker, text_jobs, recognize_text_with_paddleocr,
+                _worker, plan.text_jobs, recognize_text_with_paddleocr,
                 "text", "recognise/text",
             ))
-        if formula_jobs:
+        if plan.formula_jobs:
             futs.append(pool.submit(
-                _worker, formula_jobs, recognize_formula,
+                _worker, plan.formula_jobs, recognize_formula,
                 "latex", "recognise/formula",
             ))
         for f in futs:
