@@ -16,6 +16,28 @@ _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 IMAGE_SUFFIXES = frozenset({".jpg", ".jpeg", ".png"})
 
 
+class _NoopTqdm:
+    """Small fallback so lightweight helpers work before tqdm is installed."""
+
+    def __init__(self, iterable=None, *args, **kwargs):
+        self.iterable = iterable
+
+    def __iter__(self):
+        return iter(self.iterable or ())
+
+    def update(self, n: int = 1) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+try:
+    from tqdm.auto import tqdm  # type: ignore
+except ImportError:  # pragma: no cover - exercised only in minimal envs
+    tqdm = _NoopTqdm
+
+
 def _normalise_suffixes(suffixes: Collection[str]) -> frozenset[str]:
     return frozenset(s.lower() for s in suffixes)
 

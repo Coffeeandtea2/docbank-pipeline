@@ -107,6 +107,14 @@ Show resolved paths:
 python -m docbank_pipeline info
 ```
 
+### Unit tests
+```bash
+python -m unittest discover -v
+```
+
+The unit suite uses synthetic files and patched recognizers, so it does not
+download DocBank data or load the YOLO/OCR model weights.
+
 ---
 
 ### Small test run (5–20 pages, end-to-end)

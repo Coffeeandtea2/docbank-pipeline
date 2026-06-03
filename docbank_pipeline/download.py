@@ -24,13 +24,12 @@ import subprocess
 import zipfile
 from pathlib import Path
 
-from tqdm.auto import tqdm
-
 from .config import PipelineConfig
 from .utils import (
     human_bytes,
     mark_stage_done,
     stage_done,
+    tqdm,
     which_seven_zip,
 )
 

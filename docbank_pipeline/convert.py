@@ -27,10 +27,8 @@ import logging
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from tqdm.auto import tqdm
-
 from .config import PipelineConfig
-from .utils import iter_image_files, link_or_copy, mark_stage_done, stage_done
+from .utils import iter_image_files, link_or_copy, mark_stage_done, stage_done, tqdm
 
 log = logging.getLogger("docbank.convert")
 

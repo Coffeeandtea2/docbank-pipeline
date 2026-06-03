@@ -1,4 +1,4 @@
-"""DocBank → YOLO → OCR pipeline (refactored, resumable)."""
+"""DocBank -> YOLO -> OCR pipeline (refactored, resumable)."""
 
 # IMPORTANT: these env vars MUST be set before `paddle` (and therefore
 # `paddleocr`) is imported anywhere in the process. Paddle 3.x's new IR
@@ -33,30 +33,6 @@ for _k in (
 ):
     _os.environ.setdefault(_k, str(_per_model))
 
-from .config import PipelineConfig
-from .convert import (
-    convert_docbank_to_yolo,
-    create_yolo_yaml,
-    dataset_statistics,
-    split_dataset,
-)
-from .download import (
-    download_docbank_parts,
-    extract_archives,
-    verify_downloads,
-)
-from .inference import run_yolo_inference
-from .ocr import (
-    preprocess_crop,
-    process_folder,
-    process_page_image,
-    recognize_formula_with_latexocr,
-    recognize_text_with_paddleocr,
-    save_results_json,
-)
-from .train import train_yolo, validate_yolo
-from .utils import detect_device, setup_logging
-
 __all__ = [
     "PipelineConfig",
     "convert_docbank_to_yolo",
@@ -78,3 +54,38 @@ __all__ = [
     "validate_yolo",
     "verify_downloads",
 ]
+
+_EXPORTS = {
+    "PipelineConfig": ".config",
+    "convert_docbank_to_yolo": ".convert",
+    "create_yolo_yaml": ".convert",
+    "dataset_statistics": ".convert",
+    "detect_device": ".utils",
+    "download_docbank_parts": ".download",
+    "extract_archives": ".download",
+    "preprocess_crop": ".ocr",
+    "process_folder": ".ocr",
+    "process_page_image": ".ocr",
+    "recognize_formula_with_latexocr": ".ocr",
+    "recognize_text_with_paddleocr": ".ocr",
+    "run_yolo_inference": ".inference",
+    "save_results_json": ".ocr",
+    "setup_logging": ".utils",
+    "split_dataset": ".convert",
+    "train_yolo": ".train",
+    "validate_yolo": ".train",
+    "verify_downloads": ".download",
+}
+
+
+def __getattr__(name: str):
+    """Resolve public exports lazily so importing config/utilities stays light."""
+    if name not in _EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    from importlib import import_module
+
+    module = import_module(_EXPORTS[name], __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value

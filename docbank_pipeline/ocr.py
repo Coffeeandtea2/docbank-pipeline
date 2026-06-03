@@ -22,11 +22,9 @@ import os
 from pathlib import Path
 from typing import Any, Sequence
 
-from tqdm.auto import tqdm
-
 from .config import PipelineConfig
 from .inference import run_yolo_inference
-from .utils import iter_image_files
+from .utils import iter_image_files, tqdm
 
 log = logging.getLogger("docbank.ocr")
 
